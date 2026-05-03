@@ -33,3 +33,27 @@ def __getattr__(name: str):
 
     # Fetch the requested variable (e.g., DB_URL, ELASTIC_URL) directly from the .env file
     return get_env(name)
+
+# ----------------------------
+# SCORING WEIGHTS
+# Controls contribution of each signal to final score
+# ----------------------------
+ML_WEIGHT: float = 0.4
+GRAPH_WEIGHT: float = 0.35
+RULE_WEIGHT: float = 0.25
+
+# ----------------------------
+# LABEL THRESHOLDS
+# ----------------------------
+LABEL_THRESHOLDS = {
+    "ignore": (0.0, 0.2),
+    "low": (0.2, 0.5),
+    "medium": (0.5, 0.75),
+    "critical": (0.75, 1.0),
+}
+
+# ----------------------------
+# DBSCAN PARAMETERS
+# ----------------------------
+DBSCAN_EPS: float = 0.5
+DBSCAN_MIN_SAMPLES: int = 5
