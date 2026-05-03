@@ -14,7 +14,7 @@ This project is a comprehensive Machine Learning pipeline for network log analys
 | `parsing/` | Skeleton | Not yet implemented |
 | `features/` | Skeleton | Not yet implemented |
 | `ml/` | Skeleton | Not yet implemented |
-| `scoring/` | Skeleton | Not yet implemented |
+| `scoring/` | Skeleton | Importance scoring module initialized (config + stubs) |
 | `storage/` | Skeleton | Not yet implemented |
 | `visualization/` | Skeleton | Not yet implemented |
 | `evaluation/` | Skeleton | Not yet implemented |
@@ -131,3 +131,55 @@ from common.config import DB_URL
 - Always import variables from `common.config`.
 - Never print raw environment variables to the console.
 - Always run scripts from the project root using `python3 -m <module>` to avoid import errors.
+
+## Scoring Module (Importance Scoring)
+
+The `scoring/` module computes a final importance score for each log by combining signals from multiple components in the pipeline.
+
+### Inputs
+
+- `anomaly_df` (from ML module)
+- `graph_scores_df` (from correlation module)
+- `features_df` (from feature engineering module)
+
+### Scoring Configuration (`common/config.py`)
+
+| Parameter | Default | Description |
+|----------|--------|-------------|
+| ML_WEIGHT | 0.4 | Contribution of ML anomaly signal |
+| GRAPH_WEIGHT | 0.35 | Contribution of correlation/graph signal |
+| RULE_WEIGHT | 0.25 | Contribution of rule-based features |
+
+### Label Thresholds
+
+| Label | Range |
+|------|------|
+| ignore | 0.0 – 0.2 |
+| low | 0.2 – 0.5 |
+| medium | 0.5 – 0.75 |
+| critical | 0.75 – 1.0 |
+
+### Clustering Configuration (DBSCAN)
+
+| Parameter | Default | Description |
+|----------|--------|-------------|
+| DBSCAN_EPS | 0.5 | Maximum distance between samples in a cluster |
+| DBSCAN_MIN_SAMPLES | 5 | Minimum number of logs required to form a cluster |
+
+DBSCAN will be used in later phases to group related logs into incidents.
+
+### Output (`scored_logs_df`)
+
+The module will output a DataFrame with the following schema:
+
+- `log_id`
+- `final_score`
+- `label`
+- `incident_id`
+- `is_root_cause`
+- `root_cause_confidence`
+
+The output will be saved to:
+
+```text
+data/processed/scored_logs_df.parquet
