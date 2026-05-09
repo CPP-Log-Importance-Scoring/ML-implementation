@@ -9,7 +9,7 @@ from psycopg2.extras import Json, execute_values
 
 from common.config import DB_URL
 
-SCHEMA_PATH = Path("storage/schema.sql")
+SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 SYSTEM_COLUMNS = {"created_at", "updated_at"}
 
 
