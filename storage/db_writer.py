@@ -1,4 +1,4 @@
-import json
+import numpy as np
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -39,6 +39,7 @@ def _table_columns(conn, table_name: str) -> list[str]:
 
 def _normalize_df(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
     normalized = df.copy()
+
     for c in columns:
         if c not in normalized.columns:
             normalized[c] = None
@@ -67,45 +68,77 @@ def write_dataframe(
 
     owned_conn = conn is None
     conn = get_connection(conn)
+
     try:
-        table_cols = [c for c in _table_columns(conn, table_name) if c not in SYSTEM_COLUMNS]
+        table_cols = [
+            c for c in _table_columns(conn, table_name)
+            if c not in SYSTEM_COLUMNS
+        ]
+
         if not table_cols:
-            raise ValueError(f"Table `{table_name}` not found or has no writable columns")
+            raise ValueError(
+                f"Table `{table_name}` not found or has no writable columns"
+            )
 
         use_df = _normalize_df(df, table_cols)
+
         key_col = _upsert_key_for_table(table_name)
+
         if key_col not in use_df.columns:
-            raise ValueError(f"Missing required key column `{key_col}` for table `{table_name}`")
+            raise ValueError(
+                f"Missing required key column `{key_col}` for table `{table_name}`"
+            )
 
         insert_cols = [c for c in table_cols if c in use_df.columns]
         update_cols = [c for c in insert_cols if c != key_col]
 
-        update_clause = sql.SQL(", ").join(
-            sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(c), sql.Identifier(c))
+        assignments = [
+            sql.SQL("{} = EXCLUDED.{}").format(
+                sql.Identifier(c),
+                sql.Identifier(c)
+            )
             for c in update_cols
-        )
+        ]
+
+        assignments.append(sql.SQL("updated_at = NOW()"))
+
+        update_clause = sql.SQL(", ").join(assignments)
 
         query = sql.SQL(
             """
             INSERT INTO {table} ({columns}) VALUES %s
             ON CONFLICT ({key_col})
-            DO UPDATE SET {updates}, updated_at = NOW()
+            DO UPDATE SET {updates}
             """
         ).format(
             table=sql.Identifier(table_name),
-            columns=sql.SQL(", ").join(sql.Identifier(c) for c in insert_cols),
+            columns=sql.SQL(", ").join(
+                sql.Identifier(c) for c in insert_cols
+            ),
             key_col=sql.Identifier(key_col),
             updates=update_clause,
         )
 
-        rows = [tuple(row[c] for c in insert_cols) for _, row in use_df.iterrows()]
+        rows = [
+            tuple(row[c] for c in insert_cols)
+            for _, row in use_df.iterrows()
+        ]
+
         with conn.cursor() as cur:
-            execute_values(cur, query.as_string(conn), rows, page_size=1000)
+            execute_values(
+                cur,
+                query.as_string(conn),
+                rows,
+                page_size=1000
+            )
+
         conn.commit()
         return len(rows)
+
     except Exception:
         conn.rollback()
         raise
+
     finally:
         if owned_conn:
             conn.close()
@@ -133,7 +166,9 @@ def write_incidents(df: pd.DataFrame, conn=None) -> int:
 
 def _synthetic_data(n: int = 200) -> dict[str, pd.DataFrame]:
     timestamps = pd.date_range("2026-05-01", periods=n, freq="min")
+
     log_ids = [f"log_{i:06d}" for i in range(n)]
+
     labels = ["ignore", "low", "medium", "critical"]
 
     logs = pd.DataFrame(
@@ -142,14 +177,54 @@ def _synthetic_data(n: int = 200) -> dict[str, pd.DataFrame]:
             "sequence_number": range(n),
             "timestamp": timestamps,
             "source_type": "synthetic",
-            "service": "pipeline",
-            "host": "localhost",
-            "log_level": "INFO",
-            "event_type": "heartbeat",
-            "event_action": "tick",
-            "template_id": "tmpl_1",
-            "message": [f"synthetic message {i}" for i in range(n)],
-            "raw_text": [f"raw synthetic log {i}" for i in range(n)],
+
+            "service": [
+                ["auth", "payment", "network", "database"][i % 4]
+                for i in range(n)
+            ],
+
+            "host": [
+                ["server1", "server2", "server3"][i % 3]
+                for i in range(n)
+            ],
+
+            "log_level": [
+                ["INFO", "WARN", "ERROR", "CRITICAL"][i % 4]
+                for i in range(n)
+            ],
+
+            "event_type": [
+                ["login", "transaction", "api", "db_query"][i % 4]
+                for i in range(n)
+            ],
+
+            "event_action": [
+                ["success", "failed", "timeout"][i % 3]
+                for i in range(n)
+            ],
+
+            "template_id": [f"tmpl_{i % 5}" for i in range(n)],
+
+            "message": [
+                [
+                    "User login successful",
+                    "Payment transaction failed",
+                    "API timeout detected",
+                    "Database connection error",
+                ][i % 4]
+                for i in range(n)
+            ],
+
+            "raw_text": [
+                [
+                    "INFO auth login successful",
+                    "ERROR payment transaction failed",
+                    "WARN api timeout detected",
+                    "CRITICAL database connection error",
+                ][i % 4]
+                for i in range(n)
+            ],
+
             "metadata": [
                 {
                     "incident_id": f"inc_{i // 20:03d}",
@@ -157,7 +232,11 @@ def _synthetic_data(n: int = 200) -> dict[str, pd.DataFrame]:
                 }
                 for i in range(n)
             ],
-            "session_id": [f"s_{i // 10:03d}" for i in range(n)],
+
+            "session_id": [
+                f"s_{i // 10:03d}"
+                for i in range(n)
+            ],
         }
     )
 
@@ -167,56 +246,173 @@ def _synthetic_data(n: int = 200) -> dict[str, pd.DataFrame]:
             "timestamp": timestamps,
             "label": [labels[i % 4] for i in range(n)],
             "incident_id": [f"inc_{i // 20:03d}" for i in range(n)],
-            "frequency": 1,
-            "event_weight": 0.3,
-            "frequency_score": 0.2,
-            "severity_weight": 0.4,
-            "counter_proximity": 0.1,
-            "feature_payload": [{"source": "synthetic"}] * n,
-            "in_sequence": [i % 2 == 0 for i in range(n)],
+
+            "frequency": np.random.randint(1, 50, size=n),
+
+            "event_weight": np.random.uniform(0.1, 1.0, size=n),
+
+            "frequency_score": np.random.uniform(0.1, 1.0, size=n),
+
+            "severity_weight": np.random.uniform(0.1, 1.0, size=n),
+
+            "counter_proximity": np.random.uniform(0.1, 1.0, size=n),
+
+            "feature_payload": [
+                {"source": "synthetic"}
+            ] * n,
+
+            "in_sequence": [
+                i % 2 == 0
+                for i in range(n)
+            ],
         }
     )
 
     anomalies = pd.DataFrame(
         {
             "log_id": log_ids,
-            "incident_id": [f"inc_{i // 20:03d}" for i in range(n)],
+
+            "incident_id": [
+                f"inc_{i // 20:03d}"
+                for i in range(n)
+            ],
+
             "timestamp": timestamps,
-            "label": [labels[i % 4] for i in range(n)],
-            "isolation_score": 0.5,
-            "zscore": 0.4,
-            "anomaly_score": [0.9 if i % 13 == 0 else 0.2 for i in range(n)],
-            "is_anomaly": [i % 13 == 0 for i in range(n)],
-            "in_sequence": [i % 2 == 0 for i in range(n)],
+
+            "label": [
+                labels[i % 4]
+                for i in range(n)
+            ],
+
+            "isolation_score": np.random.uniform(
+                0.1,
+                1.0,
+                size=n
+            ),
+
+            "zscore": np.random.uniform(
+                0.1,
+                5.0,
+                size=n
+            ),
+
+            "anomaly_score": np.random.uniform(
+                0.1,
+                1.0,
+                size=n
+            ),
+
+            "is_anomaly": np.random.choice(
+                [True, False],
+                size=n,
+                p=[0.12, 0.88]
+            ),
+
+            "in_sequence": [
+                i % 2 == 0
+                for i in range(n)
+            ],
         }
     )
 
     scores = pd.DataFrame(
         {
             "log_id": log_ids,
-            "importance_score": [min(1.0, (i % 100) / 100) for i in range(n)],
-            "final_score": [min(1.0, (i % 100) / 100) for i in range(n)],
-            "label": [labels[i % 4] for i in range(n)],
-            "correlation_id": [f"corr_{i // 10:03d}" for i in range(n)],
-            "incident_id": [f"inc_{i // 20:03d}" for i in range(n)],
-            "is_root_cause": [i % 25 == 0 for i in range(n)],
-            "root_cause_confidence": [0.85 if i % 25 == 0 else 0.15 for i in range(n)],
-            "in_sequence": [i % 2 == 0 for i in range(n)],
+
+            "importance_score": np.random.uniform(
+                0.1,
+                1.0,
+                size=n
+            ),
+
+            "final_score": np.random.uniform(
+                0.1,
+                1.0,
+                size=n
+            ),
+
+            "label": [
+                labels[i % 4]
+                for i in range(n)
+            ],
+
+            "correlation_id": [
+                f"corr_{i // 10:03d}"
+                for i in range(n)
+            ],
+
+            "incident_id": [
+                f"inc_{i // 20:03d}"
+                for i in range(n)
+            ],
+
+            "is_root_cause": [
+                i % 25 == 0
+                for i in range(n)
+            ],
+
+            "root_cause_confidence": [
+                0.85 if i % 25 == 0 else 0.15
+                for i in range(n)
+            ],
+
+            "in_sequence": [
+                i % 2 == 0
+                for i in range(n)
+            ],
+
             "timestamp": timestamps,
         }
     )
 
     incidents = pd.DataFrame(
         {
-            "incident_id": [f"inc_{i:03d}" for i in range(max(1, n // 20))],
-            "start_time": [timestamps[i * 20] for i in range(max(1, n // 20))],
-            "end_time": [timestamps[min(n - 1, i * 20 + 19)] for i in range(max(1, n // 20))],
-            "root_cause_log_id": [f"log_{i * 20:06d}" for i in range(max(1, n // 20))],
-            "severity": "medium",
-            "label": "medium",
-            "root_cause_confidence": 0.8,
-            "log_count": 20,
-            "status": "open",
+            "incident_id": [
+                f"inc_{i:03d}"
+                for i in range(max(1, n // 20))
+            ],
+
+            "start_time": [
+                timestamps[i * 20]
+                for i in range(max(1, n // 20))
+            ],
+
+            "end_time": [
+                timestamps[min(n - 1, i * 20 + 19)]
+                for i in range(max(1, n // 20))
+            ],
+
+            "root_cause_log_id": [
+                f"log_{i * 20:06d}"
+                for i in range(max(1, n // 20))
+            ],
+
+            "severity": np.random.choice(
+                ["low", "medium", "high", "critical"],
+                size=max(1, n // 20)
+            ),
+
+            "label": np.random.choice(
+                ["low", "medium", "critical"],
+                size=max(1, n // 20)
+            ),
+
+            "root_cause_confidence": np.random.uniform(
+                0.5,
+                1.0,
+                size=max(1, n // 20)
+            ),
+
+            "log_count": np.random.randint(
+                5,
+                30,
+                size=max(1, n // 20)
+            ),
+
+            "status": np.random.choice(
+                ["open", "investigating", "resolved"],
+                size=max(1, n // 20)
+            ),
         }
     )
 
@@ -231,14 +427,31 @@ def _synthetic_data(n: int = 200) -> dict[str, pd.DataFrame]:
 
 def seed_synthetic_data(conn=None, n: int = 200) -> dict[str, int]:
     owned_conn = conn is None
+
     conn = get_connection(conn)
+
     try:
         apply_schema(conn)
+
         data = _synthetic_data(n)
+
         out = {}
-        for table in ["logs", "features", "anomalies", "scores", "incidents"]:
-            out[table] = write_dataframe(data[table], table, conn)
+
+        for table in [
+            "logs",
+            "features",
+            "anomalies",
+            "scores",
+            "incidents",
+        ]:
+            out[table] = write_dataframe(
+                data[table],
+                table,
+                conn
+            )
+
         return out
+
     finally:
         if owned_conn:
             conn.close()
@@ -246,4 +459,9 @@ def seed_synthetic_data(conn=None, n: int = 200) -> dict[str, int]:
 
 if __name__ == "__main__":
     counts = seed_synthetic_data(n=250)
-    print(json.dumps({"seeded_rows": counts}, indent=2))
+
+    print(
+        {
+            "seeded_rows": counts
+        }
+    )
