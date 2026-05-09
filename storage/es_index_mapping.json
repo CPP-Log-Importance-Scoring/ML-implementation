@@ -10,7 +10,8 @@
       "timestamp": { "type": "date" },
       "label": { "type": "keyword" },
       "final_score": { "type": "double" },
-      "incident_id": { "type": "keyword" }
+      "incident_id": { "type": "keyword" },
+      "is_anomaly": { "type": "boolean" }
     }
   }
 }
