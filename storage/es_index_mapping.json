@@ -1,24 +1,17 @@
 {
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
   "mappings": {
     "properties": {
       "log_id": { "type": "keyword" },
-
-      "sequence_number": { "type": "long" },
+      "raw_text": { "type": "text" },
       "timestamp": { "type": "date" },
-
-      "source_type": { "type": "keyword" },
-      "service": { "type": "keyword" },
-      "host": { "type": "keyword" },
-
-      "log_level": { "type": "keyword" },
-      "event_type": { "type": "keyword" },
-      "event_action": { "type": "keyword" },
-      "template_id": { "type": "keyword" },
-
-      "message": { "type": "text" },
-      "metadata": { "type": "object" },
-
-      "session_id": { "type": "keyword" }
+      "label": { "type": "keyword" },
+      "final_score": { "type": "double" },
+      "incident_id": { "type": "keyword" },
+      "is_anomaly": { "type": "boolean" }
     }
   }
 }
