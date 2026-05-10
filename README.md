@@ -14,7 +14,7 @@ This project is a comprehensive Machine Learning pipeline for network log analys
 | `parsing/`                              | Skeleton    | Not yet implemented                                             |
 | `features/`                             | Skeleton    | Not yet implemented                                             |
 | `ml/`                                   | In Progress | Isolation Forest + Z-score hybrid anomaly detection implemented |
-| `scoring/`                              | In Progress    | Importance scoring module initialized (config + stubs)                                             |
+| `scoring/` | Done | Full importance scoring, incident clustering, and root-cause analysis pipeline implemented |                                          |
 | `storage/`                              | Skeleton    | Not yet implemented                                             |
 | `visualization/`                        | Skeleton    | Not yet implemented                                             |
 | `evaluation/`                           | Skeleton    | Not yet implemented                                             |
@@ -210,44 +210,87 @@ from common.config import DB_URL
 
 ## Scoring Module (Importance Scoring)
 
-The `scoring/` module computes a final importance score for each log by combining signals from multiple components in the pipeline.
+The `scoring/` module integrates outputs from:
+- feature engineering
+- ML anomaly detection
+- graph correlation
 
-### Inputs
+to generate:
+- final importance scores
+- severity labels
+- incident clusters
+- root-cause candidates
 
-- `anomaly_df` (from ML module)
-- `graph_scores_df` (from correlation module)
-- `features_df` (from feature engineering module)
+### Components
 
-### Scoring Configuration (`common/config.py`)
+#### `importance_scorer.py`
+- Loads:
+  - `features_df.parquet`
+  - `anomaly_df.parquet`
+  - `graph_scores_df.parquet`
+- Merges inputs on `log_id`
+- Handles missing ML/graph outputs using fallback scores (`0.0`)
+- Computes:
 
-| Parameter | Default | Description |
-|----------|--------|-------------|
-| ML_WEIGHT | 0.4 | Contribution of ML anomaly signal |
-| GRAPH_WEIGHT | 0.35 | Contribution of correlation/graph signal |
-| RULE_WEIGHT | 0.25 | Contribution of rule-based features |
+```text
+final_score =
+    (ML_WEIGHT * combined_score)
+  + (GRAPH_WEIGHT * centrality_score)
+  + (RULE_WEIGHT * severity_weight)
+```
 
-### Label Thresholds
+- Saves:
+  - `data/processed/scored_logs_df.parquet`
 
-| Label | Range |
-|------|------|
-| ignore | 0.0 – 0.2 |
-| low | 0.2 – 0.5 |
-| medium | 0.5 – 0.75 |
-| critical | 0.75 – 1.0 |
+---
 
-### Clustering Configuration (DBSCAN)
+#### `label_mapper.py`
+Maps `final_score` into:
+- `ignore`
+- `low`
+- `medium`
+- `critical`
 
-| Parameter | Default | Description |
-|----------|--------|-------------|
-| DBSCAN_EPS | 0.5 | Maximum distance between samples in a cluster |
-| DBSCAN_MIN_SAMPLES | 5 | Minimum number of logs required to form a cluster |
+using thresholds defined in `common/config.py`.
 
-DBSCAN will be used in later phases to group related logs into incidents.
+---
 
-### Output (`scored_logs_df`)
+#### `incident_clusterer.py`
+- Uses DBSCAN clustering
+- Clustering features:
+  - `final_score`
+  - `centrality_score`
+  - `time_delta_session_start`
+- Assigns incident IDs:
+  - `INC-000`
+  - `INC-001`
+- Noise points receive:
+  - `incident_id = None`
 
-The module will output a DataFrame with the following schema:
+### DBSCAN Configuration
 
+| Parameter | Default |
+|-----------|----------|
+| `DBSCAN_EPS` | `0.5` |
+| `DBSCAN_MIN_SAMPLES` | `5` |
+
+---
+
+#### `root_cause_engine.py`
+- Identifies top root-cause candidates per incident
+- Ranks logs using `centrality_score`
+- Computes:
+  - `root_cause_confidence`
+- Saves:
+  - `data/processed/root_causes_df.parquet`
+
+---
+
+## Output Contracts
+
+### `scored_logs_df.parquet`
+
+Schema:
 - `log_id`
 - `final_score`
 - `label`
@@ -255,9 +298,28 @@ The module will output a DataFrame with the following schema:
 - `is_root_cause`
 - `root_cause_confidence`
 
-The output will be saved to:
+### `root_causes_df.parquet`
+
+Schema:
+- `incident_id`
+- `root_cause_log_id`
+- `confidence_score`
+
+---
+
+## Tests
+
+Implemented in:
 
 ```text
+scoring/tests/test_scoring.py
+```
+
+Run using:
+
+```bash
+pytest scoring/tests/test_scoring.py -v
+```
 data/processed/scored_logs_df.parquet
 ```
 
@@ -303,3 +365,11 @@ Kibana is used for deep-dive searches and incident drill-downs.
    - Click the **`+` magnifying glass icon** next to any `incident_id` to instantly drill down and filter the entire view by that incident cluster.
 4. **View Data**:
    - Just like Grafana, ensure your time filter in the top-right corner is set to include **May 1, 2026**.
+scoring/tests/test_scoring.py
+```
+
+Run using:
+
+```bash
+pytest scoring/tests/test_scoring.py -v
+```
