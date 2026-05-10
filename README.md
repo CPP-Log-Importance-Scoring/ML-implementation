@@ -349,7 +349,7 @@ Grafana is used to visualize log importance scores and anomaly rates over time.
    - Go to **Dashboards** → **New** → **Import**.
    - Upload `visualization/grafana/dashboard.json`.
    - Select the PostgreSQL data source you just created and click **Import**.
-4. **View Data**:
+4. **View Data**: 
    - Since the synthetic data is seeded for May 2026, **change the time filter** in the top-right corner to include **May 1, 2026**.
 
 ### 3. Kibana Dashboard
