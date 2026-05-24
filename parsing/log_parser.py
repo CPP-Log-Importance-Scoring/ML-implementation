@@ -43,8 +43,22 @@ SIM_THRESHOLD: float = 0.5   # minimum fraction of matching tokens to merge
 MAX_CHILDREN: int = 100      # max clusters per (length, first_token) bucket
 WILDCARD: str = "<*>"
 
-_NUMERIC_RE = re.compile(r"^\d+(\.\d+)?$")
+# Patterns treated as variable tokens (replaced with <*> during tokenisation)
+_VARIABLE_RES = [
+    re.compile(r"^\d+$"),                              # plain integers
+    re.compile(r"^\d+\.\d+$"),                         # decimals
+    re.compile(r"^\d+/\d+(/\d+)*$"),                   # CX port IDs: 1/1/1, 0/0/1
+    re.compile(r"^\d{1,3}(\.\d{1,3}){3}(/\d+)?$"),    # IPv4 [+ prefix]
+    re.compile(r"^\d+[kmgKMG]?[bB]?$"),                # byte counts / rates
+    re.compile(r"^\d+%$"),                              # percentages
+    re.compile(r"^\d+ms$"),                             # latency values
+    re.compile(r"^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$"),  # MAC addresses
+]
 _WORD_RE = re.compile(r"[A-Z_]{2,}")   # candidate template keyword
+
+
+def _is_variable(token: str) -> bool:
+    return any(r.match(token) for r in _VARIABLE_RES)
 
 
 # ---------------------------------------------------------------------------
@@ -62,10 +76,10 @@ class LogCluster:
         return " ".join(self.template)
 
     def template_id(self) -> str:
-        """Derive a short slug from the first meaningful keyword token."""
+        """Derive a short slug from the first meaningful keyword tokens."""
         keywords = [
             t for t in self.template
-            if t != WILDCARD and not _NUMERIC_RE.match(t) and len(t) > 1
+            if t != WILDCARD and not _is_variable(t) and t.isalpha() and len(t) > 1
         ]
         if keywords:
             # Use up to 3 keywords joined by underscore
@@ -143,12 +157,9 @@ class DrainParser:
 
     @staticmethod
     def _tokenize(message: str) -> List[str]:
-        """Split message into tokens, normalising numeric-only tokens."""
+        """Split message into tokens, replacing variable tokens with WILDCARD."""
         raw = message.split()
-        return [
-            WILDCARD if _NUMERIC_RE.match(t) else t
-            for t in raw
-        ]
+        return [WILDCARD if _is_variable(t) else t for t in raw]
 
     def _match_or_create(
         self, tokens: List[str], log_id: Optional[str]

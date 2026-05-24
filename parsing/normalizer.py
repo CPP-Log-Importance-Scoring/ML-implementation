@@ -119,6 +119,10 @@ def normalize_line(line: str) -> Optional[dict]:
 
         severity = _extract_severity(rest)
 
+        # Strip leading severity token from message so Drain doesn't include
+        # it in template IDs (e.g. "ERROR: Interface down" -> "Interface down")
+        message = _SEVERITY_RE.sub("", message, count=1).strip().lstrip(":").strip()
+
         return {
             "raw_text": line,
             "timestamp": timestamp,

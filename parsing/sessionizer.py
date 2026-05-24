@@ -134,17 +134,17 @@ def run(
                 parsed["message"], log_id=log_id
             )
 
-            # Parse timestamp string to float epoch seconds
+            # Parse directly to naive datetime — no epoch round-trip to avoid
+            # local-timezone shifts on machines not running UTC
             try:
-                dt = datetime.strptime(parsed["timestamp"], "%Y-%m-%d %H:%M:%S")
-                ts_epoch = dt.timestamp()
+                ts_dt = datetime.strptime(parsed["timestamp"], "%Y-%m-%d %H:%M:%S")
             except ValueError:
-                ts_epoch = datetime.now().timestamp()
+                ts_dt = datetime.utcnow()
 
             rows.append({
                 "log_id": log_id,
                 "raw_text": parsed["raw_text"],
-                "timestamp": datetime.utcfromtimestamp(ts_epoch),
+                "timestamp": ts_dt,
                 "source": parsed["source"],
                 "template_id": template_id,
                 "severity": parsed["severity"],
