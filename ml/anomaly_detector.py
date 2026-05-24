@@ -163,8 +163,9 @@ def compute_zscore_base(feature_matrix: pd.DataFrame) -> np.ndarray:
         feature_matrix.fillna(0).values, axis=0, nan_policy="omit"
     )
     # Absolute value: rare lows and rare highs both score high.
-    # Mean across feature columns → single anomaly signal per row.
-    return np.abs(col_zscores).mean(axis=1)
+    # nanmean: constant-value columns (std=0) produce NaN z-scores; ignore them
+    # rather than letting one zero-variance column poison every row's score.
+    return np.nanmean(np.abs(col_zscores), axis=1)
 
 
 def detect_anomalies(df: pd.DataFrame) -> pd.DataFrame:
