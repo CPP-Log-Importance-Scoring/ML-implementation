@@ -124,9 +124,21 @@ ZSCORE_ROLLING_WINDOW: int = 60
 ZSCORE_MIN_STD: float = 1e-6
 BURSTINESS_MIN_EVENTS: int = 2
 
+# Feature engineering — zscore baseline
+ZSCORE_BASELINE_N_SESSIONS: int = 20  # rolling window: last N sessions per host
 
-# Temporal features
-INTER_ARRIVAL_EMA_SPAN: int = 5
+# Feature engineering — inter arrival rate
+IAR_EMA_ALPHA: float = 0.3  # EMA smoothing factor, per session scope only
+
+# Counter proximity — regex patterns that identify counter/interface anomaly templates
+COUNTER_ANOMALY_PATTERNS: list = [
+    r"INTERFACE_.*THRESHOLD",
+    r"INTERFACE_.*ERROR.*EXCEED",
+    r"INTERFACE_.*DROP.*EXCEED",
+]
+# Hint keywords — templates containing these but not matching COUNTER_ANOMALY_PATTERNS
+# trigger a WARNING so the pattern list can be updated as new templates are discovered
+COUNTER_ANOMALY_HINT_KEYWORDS: list = ["THRESHOLD", "ERROR", "DROP", "EXCEED"]
 
 
 # Feature pipeline paths
@@ -143,13 +155,16 @@ FEATURES_OUTPUT_PATH: str = (
 FEATURE_COLUMNS = [
     "sequence_number",
     "session_id",
-    "frequency",
-    "event_weight",
+    "template_id",
+    "host",
+    "timestamp",
+    "frequency_score",
     "burstiness_score",
     "zscore_base",
     "time_delta_prev",
     "time_delta_session_start",
     "inter_arrival_rate",
+    "event_weight",
     "counter_proximity",
 ]
 

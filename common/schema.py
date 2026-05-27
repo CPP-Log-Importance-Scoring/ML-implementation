@@ -47,18 +47,22 @@ class LogEntry:
 class FeaturesRow:
     """One row of features_df.parquet (P2 output).
 
-    sequence_number and session_id are carried from LogEntry.
-    frequency and event_weight are passed through from parsing (no recomputation).
+    sequence_number, session_id, template_id, host, timestamp, and event_weight
+    are carried from LogEntry (no recomputation).  frequency_score normalises the
+    raw frequency column from parsing.  All other fields are computed here.
     """
     sequence_number: int
     session_id: str
-    frequency: int
-    event_weight: float
+    template_id: str
+    host: str
+    timestamp: datetime
+    frequency_score: float
     burstiness_score: float
     zscore_base: float
     time_delta_prev: float
     time_delta_session_start: float
     inter_arrival_rate: float
+    event_weight: float
     counter_proximity: float
 
 
