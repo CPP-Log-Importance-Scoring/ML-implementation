@@ -100,6 +100,9 @@ COUNTER_PROXIMITY_WINDOW_SECONDS: int = 30
 
 SESSION_GAP_SECONDS: int = 1800  # 30-min inactivity gap within same host → new session
 
+# All current ingestion is HPE CX switch logs — revisit when multi-device support is added
+DEFAULT_SOURCE_TYPE: str = "switch"
+
 # Daemon/process name → canonical subsystem label.
 # Only entries where the raw process name is ambiguous or non-standard need to be listed.
 # All other names are upper-cased and used as-is (e.g. "OSPF" → "OSPF").

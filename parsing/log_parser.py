@@ -118,6 +118,10 @@ class DrainParser:
         self._tree: Dict[int, Dict[str, List[LogCluster]]] = defaultdict(
             lambda: defaultdict(list)
         )
+        # slug -> first cluster that claimed it; used for collision detection
+        self._slug_registry: Dict[str, LogCluster] = {}
+        # stable sentinel cluster returned for empty/unparseable messages
+        self._empty_cluster: LogCluster = LogCluster(template=["EMPTY"], count=0)
 
     # ------------------------------------------------------------------
     # Public API
@@ -141,6 +145,42 @@ class DrainParser:
 
         cluster = self._match_or_create(tokens, sequence_number)
         return cluster.template_id(), cluster.template_str()
+
+    def add_log_message_cluster(
+        self, message: str, sequence_number: Optional[int] = None
+    ) -> LogCluster:
+        """Parse one log message and return the matched/created cluster object.
+
+        Use this during Pass 1 of the two-pass parsing flow.  Call
+        resolve_template_id() in Pass 2 once all messages have been parsed and
+        Drain templates are stable.
+        """
+        tokens = self._tokenize(message)
+        if not tokens:
+            self._empty_cluster.count += 1
+            if sequence_number is not None:
+                self._empty_cluster.sequence_numbers.append(sequence_number)
+            return self._empty_cluster
+        return self._match_or_create(tokens, sequence_number)
+
+    def resolve_template_id(self, cluster: LogCluster) -> str:
+        """Return a collision-safe template ID for the given cluster.
+
+        On first call for a given base slug the slug is registered and returned
+        unchanged.  If a different cluster already owns that slug, a 4-char hex
+        suffix derived from the cluster's template tokens is appended instead,
+        e.g. ``OSPF_NEIGHBOR_STATE_a3f2``.
+        """
+        base = cluster.template_id()
+        existing = self._slug_registry.get(base)
+        if existing is None:
+            self._slug_registry[base] = cluster
+            return base
+        if existing is cluster:
+            return base
+        # Collision: a different cluster owns this base slug — append a suffix.
+        h = hashlib.md5(" ".join(cluster.template).encode()).hexdigest()[:4]
+        return f"{base}_{h}"
 
     def all_templates(self) -> List[Tuple[str, str, int]]:
         """Return list of (template_id, template_string, count) for all clusters."""

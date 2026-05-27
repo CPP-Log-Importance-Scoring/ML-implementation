@@ -42,6 +42,9 @@ from datetime import datetime
 from typing import Optional
 
 from common.config import SERVICE_ALIAS_MAP
+from common.logger import get_logger
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # PRI code handling (RFC 3164 / 5424)
@@ -78,6 +81,8 @@ def _parse_timestamp(ts_str: str) -> Optional[datetime]:
             pass
     try:
         dt = datetime.strptime(ts_str, "%b %d %H:%M:%S")
+        # TODO: year boundary — if parsed month/day is after today, assign previous year.
+        # Affects log files spanning Dec 31 → Jan 1. Deferred — not in scope this week.
         return dt.replace(year=datetime.now().year)
     except ValueError:
         pass
@@ -193,7 +198,8 @@ def normalize_line(line: str) -> Optional[dict]:
                 break
 
     if ts_dt is None:
-        ts_dt = datetime.utcnow()
+        logger.warning(f"Unparseable timestamp — skipping line: {line!r}")
+        return None
 
     # First token after timestamp is the hostname
     parts = rest.split(None, 1)

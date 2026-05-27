@@ -37,7 +37,6 @@ session_id       str       -- groups related events; not in canonical DB schema
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -49,6 +48,7 @@ from common.config import (
     SESSIONIZED_LOGS_PATH,
     SEVERITY_WEIGHTS,
     DEFAULT_SEVERITY_WEIGHT,
+    DEFAULT_SOURCE_TYPE,
 )
 from common.logger import get_logger
 from common.utils import save_parquet, validate_schema
@@ -67,9 +67,9 @@ REQUIRED_OUTPUT_COLUMNS = [
     "template_id",
     "frequency",
     "event_weight",
+    "session_id",
     "message",
     "metadata",
-    "session_id",
 ]
 
 
@@ -86,11 +86,17 @@ def _assign_sessions(df: pd.DataFrame) -> pd.DataFrame:
     host_changed = df["host"] != df["host"].shift(1)
 
     session_ids = []
-    counter = 0
+    current_session_id: str | None = None
+    _seen_bases: dict[str, int] = {}
     for i in range(len(df)):
         if host_changed.iloc[i] or gap_seconds.iloc[i] > SESSION_GAP_SECONDS:
-            counter += 1
-        session_ids.append(f"session_{counter:04d}")
+            session_start_ts = ts_series.iloc[i].to_pydatetime()
+            host = df["host"].iloc[i]
+            base = f"{host}_{session_start_ts.strftime('%Y%m%dT%H%M%S')}"
+            count = _seen_bases.get(base, 0) + 1
+            _seen_bases[base] = count
+            current_session_id = base if count == 1 else f"{base}_{count}"
+        session_ids.append(current_session_id)
 
     df["session_id"] = session_ids
     return df
@@ -144,6 +150,8 @@ def run(
     seq_num = 0
     skipped = 0
 
+    # Pass 1: feed every message through Drain and store the cluster object.
+    # template_id() is NOT called here — Drain templates are still evolving.
     with open(input_path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             parsed = normalize_line(line)
@@ -152,18 +160,18 @@ def run(
                 continue
 
             seq_num += 1
-            template_id, _ = parser.add_log_message(
+            cluster = parser.add_log_message_cluster(
                 parsed["message"], sequence_number=seq_num
             )
 
             rows.append({
                 "sequence_number": seq_num,
                 "timestamp": parsed["timestamp"],
-                "source_type": "switch",
+                "source_type": DEFAULT_SOURCE_TYPE,
                 "service": parsed["service"],
                 "host": parsed["host"],
                 "log_level": parsed["log_level"],
-                "template_id": template_id,
+                "_cluster": cluster,
                 "event_weight": SEVERITY_WEIGHTS.get(
                     parsed["log_level"], DEFAULT_SEVERITY_WEIGHT
                 ),
@@ -178,6 +186,11 @@ def run(
         )
 
     logger.info(f"Parsed {len(rows):,} lines ({skipped} skipped) from {input_path}")
+
+    # Pass 2: Drain templates are now stable — resolve final collision-safe slugs.
+    # session_id assignment and frequency groupby both run after this point.
+    for row in rows:
+        row["template_id"] = parser.resolve_template_id(row.pop("_cluster"))
 
     df = pd.DataFrame(rows)
     df = _assign_sessions(df)
