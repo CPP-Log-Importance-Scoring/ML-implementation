@@ -85,17 +85,20 @@ class AnomalyRow:
 
 @dataclass
 class GraphScoreRow:
-    """One row of graph_scores_df.parquet (P4 output).
+    """One row of graph_scores_df.parquet (P3 output).
 
-    centrality_score (PageRank) is the primary signal consumed by scoring.
-    correlation_id groups logs into incident clusters; NULL for unclustered logs.
+    # cluster_id  (P3) = graph connected component — structural relationship
+    # correlation_id (P4) = DBSCAN incident cluster — anomaly grouping
+    # P4 uses cluster_id as one input to assign correlation_id
     """
     sequence_number: int
-    centrality_score: float  # PageRank [0, 1] — primary signal for scoring
-    degree: int              # edge count in co-occurrence graph
-    betweenness: float       # normalised betweenness centrality [0, 1]
-    correlation_id: Optional[str]  # incident cluster label; NULL if unclustered
-    in_sequence: bool        # True if part of a detected recurring sequence
+    centrality_score: float       # PageRank normalised [0, 1] — primary signal for scoring
+    degree: int                   # node degree in co-occurrence graph
+    betweenness: float            # betweenness centrality normalised [0, 1]
+    in_graph: bool                # True if template made it past GRAPH_MAX_NODES cap
+    cluster_id: str               # connected component ID e.g. "C0000"; "UNCAPPED" if outside graph
+    in_sequence: bool             # True if part of a detected recurring sequence
+    correlated_log_ids: list      # sequence_numbers of co-occurring logs (as strings) for parquet compat
 
 
 @dataclass

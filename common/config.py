@@ -13,22 +13,27 @@ LOG_LEVEL: str = "INFO"
 # Correlation / Graph parameters
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Graph construction — canonical names
+# ---------------------------------------------------------------------------
+
 # Time window (seconds) within which two log events are considered co-occurring.
 # Widening this produces a denser graph; narrowing it produces a sparser one.
-CORRELATION_TIME_WINDOW_SECONDS: int = 60
+GRAPH_COOCCURRENCE_WINDOW_SECONDS: int = 60
 
-# Hard cap on the number of template nodes admitted into the correlation graph.
-# Only the MAX_GRAPH_NODES most-frequent templates are kept; the rest are
-# silently dropped before edge construction begins.  Raising this limit
-# increases memory and CPU cost roughly as O(N^2) in the worst case because
-# the sliding-window join visits every pair of events that fall inside the
-# same time window.  500 is a safe default for a single-host deployment;
-# reduce to ~100 for memory-constrained environments or increase carefully
-# after profiling.
-MAX_GRAPH_NODES: int = 500
+# Hard cap on unique templates admitted into the co-occurrence graph.
+# Only the top-N most-frequent templates are kept; the rest are excluded
+# before edge construction.  500 is a safe default for a single-host
+# deployment; reduce to ~100 for memory-constrained environments.
+GRAPH_MAX_NODES: int = 500
 
 # PageRank damping factor (standard value; literature range 0.8–0.9).
-PAGERANK_ALPHA: float = 0.85
+GRAPH_PAGERANK_ALPHA: float = 0.85
+
+# Backward-compatible aliases — kept so existing imports don't break.
+CORRELATION_TIME_WINDOW_SECONDS: int = GRAPH_COOCCURRENCE_WINDOW_SECONDS
+MAX_GRAPH_NODES: int = GRAPH_MAX_NODES
+PAGERANK_ALPHA: float = GRAPH_PAGERANK_ALPHA
 
 # Betweenness centrality approximation: number of pivot nodes sampled.
 # Full exact computation is O(V*E) which is impractical for graphs > 200 nodes.
@@ -42,7 +47,7 @@ SEQUENCE_WINDOW_SECONDS: int = 30
 # A sequence must contain at least this many log templates.
 SEQUENCE_MIN_LENGTH: int = 3
 # A sequence must appear in at least this many distinct sessions.
-SEQUENCE_MIN_SUPPORT: int = 3
+SEQUENCE_MIN_SUPPORT: int = 5
 
 # ---------------------------------------------------------------------------
 # Phase 3 output paths
