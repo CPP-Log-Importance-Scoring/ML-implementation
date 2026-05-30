@@ -47,6 +47,7 @@ from common.config import (
     IF_ZSCORE_WEIGHT,
     COLD_START_FULL_CONFIDENCE_THRESHOLD,
     ANOMALY_SCORE_THRESHOLD,
+    ANOMALY_DYNAMIC_K,
 )
 from common.logger import get_logger
 from common.utils import load_parquet, save_parquet, validate_schema
@@ -193,9 +194,19 @@ def detect(
     )
 
     # ------------------------------------------------------------------
-    # Step 6 — anomaly flag
+    # Step 6 — anomaly flag (dynamic threshold: mean + k × std)
     # ------------------------------------------------------------------
-    is_anomaly = combined_score > ANOMALY_SCORE_THRESHOLD
+    _score_std = float(combined_score.std())
+    _threshold = (
+        float(combined_score.mean()) + ANOMALY_DYNAMIC_K * _score_std
+        if _score_std >= 1e-6
+        else ANOMALY_SCORE_THRESHOLD  # fallback: all scores identical
+    )
+    logger.info(
+        f"Anomaly threshold: {_threshold:.4f}  "
+        f"(mean={combined_score.mean():.4f}, std={_score_std:.4f}, k={ANOMALY_DYNAMIC_K})"
+    )
+    is_anomaly = combined_score > _threshold
 
     # ------------------------------------------------------------------
     # Step 7 — assemble and validate output

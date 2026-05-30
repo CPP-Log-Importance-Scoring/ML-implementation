@@ -32,6 +32,7 @@ import pytest
 
 from common.config import (
     ANOMALY_SCORE_THRESHOLD,
+    ANOMALY_DYNAMIC_K,
     COLD_START_FULL_CONFIDENCE_THRESHOLD,
     IF_FEATURE_COLUMNS,
     RETRAINING_TRIGGER_EVERY_K,
@@ -171,7 +172,14 @@ class TestDetectScoreBounds:
 
     def test_is_anomaly_consistent_with_threshold(self, features_df):
         result = detect(features_df)
-        expected = result["combined_score"] > ANOMALY_SCORE_THRESHOLD
+        scores = result["combined_score"].values
+        score_std = float(scores.std())
+        threshold = (
+            float(scores.mean()) + ANOMALY_DYNAMIC_K * score_std
+            if score_std >= 1e-6
+            else ANOMALY_SCORE_THRESHOLD
+        )
+        expected = result["combined_score"] > threshold
         pd.testing.assert_series_equal(
             result["is_anomaly"].reset_index(drop=True),
             expected.reset_index(drop=True),

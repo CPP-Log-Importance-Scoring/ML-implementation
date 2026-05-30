@@ -239,7 +239,12 @@ IF_ZSCORE_WEIGHT: float = 0.3
 COLD_START_FULL_CONFIDENCE_THRESHOLD: int = 500
 
 # Combined score above this value → is_anomaly = True.
+# Used as fallback when score std < 1e-6 (all-identical edge case).
 ANOMALY_SCORE_THRESHOLD: float = 0.5
+
+# Multiplier for the dynamic threshold: threshold = mean(scores) + k × std(scores).
+# k=2.0 flags scores more than 2 standard deviations above the batch mean (~top 2.3%).
+ANOMALY_DYNAMIC_K: float = 2.0
 
 # Sliding window: retrain on the last N sessions only.
 RETRAINING_SESSION_WINDOW: int = 50

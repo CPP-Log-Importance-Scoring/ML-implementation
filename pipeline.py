@@ -84,48 +84,14 @@ def _step_parsing(log_file: str) -> int:
     else:
         logger.warning(
             f"Log file not found: {log_file}. "
-            "Generating synthetic sessionized data instead."
+            "Generating synthetic data via real parsing pipeline."
         )
-        import json
-        import pandas as pd
         from scripts.generate_real_logs import generate_dataset
-        from common.config import SEVERITY_WEIGHTS, DEFAULT_SEVERITY_WEIGHT, DEFAULT_SOURCE_TYPE
         from common.utils import save_parquet
 
+        # generate_dataset() runs the real parser and returns the canonical DataFrame.
+        # Re-save under the pipeline's path in case config paths differ.
         df = generate_dataset()
-
-        # Map to canonical schema
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_localize(None)
-        df["sequence_number"] = df.index.astype("int64")
-        df["source_type"] = DEFAULT_SOURCE_TYPE
-        # Derive host from session_id (session_000 → synth-host-000)
-        df["host"] = "synth-host-" + df["session_id"].str.extract(r"(\d+)$")[0].fillna("000")
-        # service = first token of template_id before the first "_"
-        df["service"] = df["template_id"].str.split("_").str[0]
-        df["event_type"] = df["service"]
-        df["event_action"] = df.apply(
-            lambda r: r["template_id"][len(r["service"]) + 1:]
-            if r["template_id"].startswith(r["service"] + "_")
-            else r["template_id"].split("_", 1)[-1],
-            axis=1,
-        )
-        # frequency = count of same template within the same session
-        df["frequency"] = df.groupby(["session_id", "template_id"])["template_id"].transform("count").astype(int)
-        df["event_weight"] = df["log_level"].map(SEVERITY_WEIGHTS).fillna(DEFAULT_SEVERITY_WEIGHT)
-        df["importance_score"] = 0.0
-        df["correlation_id"] = None
-        df["message"] = df["log_level"] + " " + df["template_id"] + " synthetic log entry"
-        df["metadata"] = df["message"].apply(lambda m: json.dumps({"raw_text": m}))
-
-        # Keep only canonical columns (plus session_id for downstream feature groupby)
-        canonical_cols = [
-            "sequence_number", "timestamp", "source_type", "service", "host",
-            "log_level", "event_type", "event_action", "template_id",
-            "frequency", "event_weight", "importance_score", "correlation_id",
-            "message", "metadata", "session_id",
-        ]
-        df = df[canonical_cols]
-
         Path(SESSIONIZED_PATH).parent.mkdir(parents=True, exist_ok=True)
         save_parquet(df, SESSIONIZED_PATH)
 
