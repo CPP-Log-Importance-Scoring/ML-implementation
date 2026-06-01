@@ -30,10 +30,13 @@ import time
 import pandas as pd
 
 import common.config as cfg
+from common.logger import get_logger
 from correlation.centrality import compute_centrality
 from correlation.graph_builder import build_graph, load_or_build_graph
 from correlation.graph_visualizer import export_graph_json
 from correlation.sequence_engine import detect_sequences
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -59,21 +62,21 @@ def _ensure_data_dir() -> None:
 def _ensure_logs_exist() -> None:
     """Generate synthetic data if the parquet file does not exist."""
     if not os.path.exists(SESSIONIZED_LOGS_PATH):
-        print(f"  sessionized_logs.parquet not found at {SESSIONIZED_LOGS_PATH}")
-        print("  Generating synthetic data via scripts/generate_real_logs.py ...")
-        # Import and run inline to avoid subprocess dependency
+        logger.warning(
+            "sessionized_logs.parquet not found at %s. "
+            "Generating synthetic data via scripts/generate_real_logs.py ...",
+            SESSIONIZED_LOGS_PATH,
+        )
         sys.path.insert(0, ".")
         from scripts.generate_real_logs import generate_dataset  # type: ignore
         os.makedirs(os.path.dirname(SESSIONIZED_LOGS_PATH), exist_ok=True)
         df = generate_dataset()
         df.to_parquet(SESSIONIZED_LOGS_PATH, index=False)
-        print(f"  Generated {len(df):,} rows -> {SESSIONIZED_LOGS_PATH}")
+        logger.info("Generated %d rows -> %s", len(df), SESSIONIZED_LOGS_PATH)
 
 
 def _section(title: str) -> None:
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print(f"{'='*60}")
+    logger.info("%s", title)
 
 
 # ---------------------------------------------------------------------------
@@ -97,11 +100,10 @@ def run() -> None:
 
     if REBUILD_GRAPH and os.path.exists(GRAPH_PICKLE_PATH):
         os.remove(GRAPH_PICKLE_PATH)
-        print("  Forced rebuild: removed cached graph.")
+        logger.info("Forced rebuild: removed cached graph.")
 
     g = load_or_build_graph(raw_df)
-    print(f"  Graph: {len(g.nodes)} nodes, {len(g.edges)} edges")
-    print(f"  Elapsed: {time.perf_counter() - t0:.2f}s")
+    logger.info("Graph: %d nodes, %d edges  (%.2fs)", len(g.nodes), len(g.edges), time.perf_counter() - t0)
 
     # ------------------------------------------------------------------
     # Step 2: Compute centrality scores
@@ -110,11 +112,13 @@ def run() -> None:
     t0 = time.perf_counter()
 
     graph_scores_df = compute_centrality(g, raw_df)
-    print(f"  Computed centrality for {len(graph_scores_df)} log rows")
-    print(f"  centrality_score range: "
-          f"[{graph_scores_df['centrality_score'].min():.4f}, "
-          f"{graph_scores_df['centrality_score'].max():.4f}]")
-    print(f"  Elapsed: {time.perf_counter() - t0:.2f}s")
+    logger.info(
+        "Centrality computed for %d log rows  centrality_score range=[%.4f, %.4f]  (%.2fs)",
+        len(graph_scores_df),
+        graph_scores_df['centrality_score'].min(),
+        graph_scores_df['centrality_score'].max(),
+        time.perf_counter() - t0,
+    )
 
     # ------------------------------------------------------------------
     # Step 3: Detect sequences
@@ -132,10 +136,10 @@ def run() -> None:
     with open(SEQUENCES_JSON_PATH, "r") as fh:
         sequences = json.load(fh)
 
-    print(f"  Detected {len(sequences)} recurring sequences")
-    print(f"  Logs in sequence: {len(in_sequence_log_ids):,}")
-    print(f"  Written to {SEQUENCES_JSON_PATH}")
-    print(f"  Elapsed: {time.perf_counter() - t0:.2f}s")
+    logger.info(
+        "Detected %d recurring sequences, %d logs in sequence  (%.2fs)",
+        len(sequences), len(in_sequence_log_ids), time.perf_counter() - t0,
+    )
 
     # ------------------------------------------------------------------
     # Step 4: Patch in_sequence and persist graph_scores_df
@@ -149,11 +153,10 @@ def run() -> None:
     from common.utils import save_parquet
     save_parquet(graph_scores_df, GRAPH_SCORES_PATH)
 
-    print(f"  Rows: {len(graph_scores_df):,}")
-    print(f"  in_sequence=True: {graph_scores_df['in_sequence'].sum():,}")
-    print(f"  Columns: {list(graph_scores_df.columns)}")
-    print(f"  Written to {GRAPH_SCORES_PATH}")
-    print(f"  Elapsed: {time.perf_counter() - t0:.2f}s")
+    logger.info(
+        "graph_scores_df saved: rows=%d, in_sequence=%d  (%.2fs)",
+        len(graph_scores_df), graph_scores_df['in_sequence'].sum(), time.perf_counter() - t0,
+    )
 
     # ------------------------------------------------------------------
     # Step 5: Export JSON visualization
@@ -162,22 +165,19 @@ def run() -> None:
     t0 = time.perf_counter()
 
     export_graph_json(g, output_path=GRAPH_JSON_PATH)
-    print(f"  Graph: {len(g.nodes)} nodes, {len(g.edges)} edges")
-    print(f"  Written to {GRAPH_JSON_PATH}")
-    print(f"  Elapsed: {time.perf_counter() - t0:.2f}s")
+    logger.info(
+        "Graph JSON exported: %d nodes, %d edges  (%.2fs)",
+        len(g.nodes), len(g.edges), time.perf_counter() - t0,
+    )
 
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
-    _section("Done")
-    print(f"  Total elapsed: {time.perf_counter() - total_start:.2f}s")
-    print()
-    print("  Output files:")
+    logger.info("Phase 3 complete. Total elapsed: %.2fs", time.perf_counter() - total_start)
     for path in [GRAPH_PICKLE_PATH, SEQUENCES_JSON_PATH, GRAPH_SCORES_PATH, GRAPH_JSON_PATH]:
         size_kb = os.path.getsize(path) / 1024 if os.path.exists(path) else 0
-        print(f"    {path}  ({size_kb:.1f} KB)")
-    print()
-    print("  P4 handoff: data/processed/graph_scores_df.parquet is ready.")
+        logger.info("  Output: %s  (%.1f KB)", path, size_kb)
+    logger.info("P4 handoff: %s is ready.", GRAPH_SCORES_PATH)
 
 
 if __name__ == "__main__":

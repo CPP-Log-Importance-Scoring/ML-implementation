@@ -155,6 +155,22 @@ FEATURES_OUTPUT_PATH: str = (
     "data/processed/features_df.parquet"
 )
 
+# ---------------------------------------------------------------------------
+# Persistent drift detection stores
+# ---------------------------------------------------------------------------
+
+# Welford online z-score baseline: one row per (host, template_id).
+# Accumulates mean/variance across pipeline runs for cross-run drift detection.
+ZSCORE_BASELINE_STORE_PATH: str = "data/processed/zscore_baseline_store.parquet"
+
+# Rolling feature store for IsolationForest sliding-window retraining.
+# Holds raw feature rows from the last FEATURE_ROLLING_MAX_SESSIONS sessions.
+FEATURE_ROLLING_STORE_PATH: str = "data/processed/feature_rolling_store.parquet"
+
+# Maximum unique sessions to retain in the rolling feature store.
+# Matches RETRAINING_SESSION_WINDOW so the two stores stay in sync.
+FEATURE_ROLLING_MAX_SESSIONS: int = 50
+
 
 # Feature dataframe schema contract
 FEATURE_COLUMNS = [
@@ -240,7 +256,12 @@ IF_ZSCORE_WEIGHT: float = 0.3
 COLD_START_FULL_CONFIDENCE_THRESHOLD: int = 500
 
 # Combined score above this value → is_anomaly = True.
+# Used as fallback when score std < 1e-6 (all-identical edge case).
 ANOMALY_SCORE_THRESHOLD: float = 0.5
+
+# Multiplier for the dynamic threshold: threshold = mean(scores) + k × std(scores).
+# k=2.0 flags scores more than 2 standard deviations above the batch mean (~top 2.3%).
+ANOMALY_DYNAMIC_K: float = 2.0
 
 # Sliding window: retrain on the last N sessions only.
 RETRAINING_SESSION_WINDOW: int = 50

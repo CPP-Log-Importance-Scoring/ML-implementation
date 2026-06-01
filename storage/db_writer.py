@@ -86,14 +86,17 @@ def _normalize_df(df: pd.DataFrame, columns: Iterable[str]):
     return normalized[ordered]
 
 
-def _upsert_key_for_table(table_name: str):
-    if table_name == "incidents":
-        return "incident_id"
+_TABLE_KEY_MAP: dict = {
+    "logs": "sequence_number",
+    "features": "sequence_number",
+    "anomalies": "sequence_number",
+    "scores": "sequence_number",
+    "incidents": "incident_id",
+}
 
-    if table_name == "summaries":
-        return "correlation_id"
 
-    return "log_id"
+def _upsert_key_for_table(table_name: str) -> str:
+    return _TABLE_KEY_MAP.get(table_name, "sequence_number")
 
 
 def write_dataframe(

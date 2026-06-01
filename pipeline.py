@@ -84,51 +84,14 @@ def _step_parsing(log_file: str) -> int:
     else:
         logger.warning(
             f"Log file not found: {log_file}. "
-            "Generating synthetic sessionized data instead."
+            "Generating synthetic data via real parsing pipeline."
         )
-        import json
-        import pandas as pd
         from scripts.generate_real_logs import generate_dataset
-        from common.config import SEVERITY_WEIGHTS, DEFAULT_SEVERITY_WEIGHT, DEFAULT_SOURCE_TYPE
         from common.utils import save_parquet
 
+        # generate_dataset() runs the real parser and returns the canonical DataFrame.
+        # Re-save under the pipeline's path in case config paths differ.
         df = generate_dataset()
-
-        # Map to canonical schema
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_localize(None)
-        df["sequence_number"] = df.index.astype("int64")
-        df["source_type"] = DEFAULT_SOURCE_TYPE
-        # Derive host from session_id (session_000 → synth-host-000)
-        df["host"] = "synth-host-" + df["session_id"].str.extract(r"(\d+)$")[0].fillna("000")
-        # service = first token of template_id before the first "_"
-        df["service"] = df["template_id"].str.split("_").str[0]
-        df["event_type"] = df["service"]
-        df["event_action"] = df.apply(
-            lambda r: r["template_id"][len(r["service"]) + 1:]
-            if r["template_id"].startswith(r["service"] + "_")
-            else r["template_id"].split("_", 1)[-1],
-            axis=1,
-        )
-        # frequency = count of same template within the same session
-        df["frequency"] = df.groupby(["session_id", "template_id"])["template_id"].transform("count").astype(int)
-        df["event_weight"] = df["log_level"].map(SEVERITY_WEIGHTS).fillna(DEFAULT_SEVERITY_WEIGHT)
-        df["importance_score"] = 0.0
-        df["correlation_id"] = None
-        df["message"] = df["log_level"] + " " + df["template_id"] + " synthetic log entry"
-        df["metadata"] = df["message"].apply(lambda m: json.dumps({"raw_text": m}))
-
-        # Keep only canonical columns (plus session_id for downstream feature groupby)
-        canonical_cols = [
-            "log_id", "sequence_number", "timestamp", "source_type", "service", "host",
-            "log_level", "event_type", "event_action", "template_id",
-            "frequency", "event_weight", "importance_score", "correlation_id",
-            "message", "metadata", "session_id",
-        ]
-        # Ensure a stable, non-null `log_id` for downstream modules and DB writes
-        df["log_id"] = df["sequence_number"].apply(lambda i: f"log_{int(i):06d}")
-
-        df = df[canonical_cols]
-
         Path(SESSIONIZED_PATH).parent.mkdir(parents=True, exist_ok=True)
         save_parquet(df, SESSIONIZED_PATH)
 
@@ -154,16 +117,22 @@ def _step_anomaly() -> int:
 
 
 def _step_correlation() -> int:
-    """Run the graph correlation step."""
+    """Run the graph correlation step.
+
+    Always forces a graph rebuild to prevent stale cached graphs (built from
+    different template data) from producing all-UNCAPPED centrality scores.
+    """
     import os
-
-    # Correlation module reads SESSIONIZED_LOGS_PATH from config.
-    # Point it at our canonical path.
     import common.config as cfg
-    _orig = cfg.SESSIONIZED_LOGS_PATH
 
-    # Monkey-patch so run_correlation reads from our pipeline path.
-    # This is safe — it only affects this process for the duration of the call.
+    # Delete cached graph so build_graph() always runs fresh against the
+    # current sessionized_logs.parquet.  This is safe and fast (< 1s typical).
+    graph_cache = cfg.GRAPH_PICKLE_PATH
+    if os.path.exists(graph_cache):
+        os.remove(graph_cache)
+        logger.info(f"Removed stale graph cache: {graph_cache}")
+
+    _orig = cfg.SESSIONIZED_LOGS_PATH
     cfg.SESSIONIZED_LOGS_PATH = SESSIONIZED_PATH
 
     try:
@@ -221,6 +190,30 @@ def _step_storage(dry_run: bool) -> int:
         if Path(SCORED_LOGS_PATH).exists():
             scored_df = pd.read_parquet(SCORED_LOGS_PATH)
             counts["scores"] = write_scores(scored_df, conn)
+        if not dry_run and Path(SCORED_LOGS_PATH).exists():
+            try:
+                import pandas as _pd
+                from pathlib import Path as _Path
+                from dashboard.llm_summary import (
+                    generate_all_summaries as _gen_summaries,
+                )
+
+                _scored_df = _pd.read_parquet(SCORED_LOGS_PATH)
+
+                _rc_df = _pd.DataFrame()
+                _rc_path = "data/processed/root_causes_df.parquet"
+
+                if _Path(_rc_path).exists():
+                    _rc_df = _pd.read_parquet(_rc_path)
+
+                _gen_summaries(_scored_df, _rc_df, batch_size=20)
+                logger.info("LLM summaries generated and cached.")
+
+            except Exception as _exc:
+                logger.warning(
+                    "LLM summary generation failed (non-fatal): %s",
+                    _exc,
+                )
 
         conn.commit()
         logger.info(f"Postgres write counts: {counts}")

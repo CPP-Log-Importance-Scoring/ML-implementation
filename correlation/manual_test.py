@@ -5,73 +5,53 @@ Run this from the project root to inspect the correlation graph interactively:
 
     python -m correlation.manual_test
 
-It uses the same 5-node synthetic scenario as the unit tests so you can
-cross-check the output against the expected values in test_correlation.py.
+Loads the current sessionized_logs.parquet and prints graph statistics.
+Not a pytest test -- kept as a developer diagnostic script.
 """
 
-from correlation.graph_builder import LogEvent, build_graph
+import pandas as pd
 
-# ---------------------------------------------------------------------------
-# Same synthetic events as the unit tests
-# ---------------------------------------------------------------------------
+from correlation.graph_builder import build_graph
+from correlation.centrality import compute_centrality
 
-events = [
-    LogEvent(timestamp=0,  template="T1"),
-    LogEvent(timestamp=10, template="T2", is_anomaly=True, anomaly_label="anomaly:if_counter"),
-    LogEvent(timestamp=30, template="T3"),
-    LogEvent(timestamp=50, template="T4"),
-    LogEvent(timestamp=70, template="T5"),
-    LogEvent(timestamp=75, template="T1"),   # second occurrence
-]
 
-graph = build_graph(events, time_window_seconds=60)
+def _main() -> None:
+    try:
+        df = pd.read_parquet("data/processed/sessionized_logs.parquet")
+    except FileNotFoundError:
+        print("sessionized_logs.parquet not found. Run the pipeline first.")
+        return
 
-# ---------------------------------------------------------------------------
-# Print nodes
-# ---------------------------------------------------------------------------
+    g = build_graph(df)
 
-print("=" * 60)
-print(f"NODES  ({len(graph.nodes)} total)")
-print("=" * 60)
-print(f"  {'ID':<30} {'TYPE':<14} COUNT")
-print(f"  {'-'*30} {'-'*14} -----")
-for node in sorted(graph.nodes.values(), key=lambda n: n.id):
-    print(f"  {node.id:<30} {node.node_type:<14} {node.count}")
+    print("=" * 60)
+    print(f"NODES  ({len(g.nodes)} total)")
+    print("=" * 60)
+    for node, attrs in sorted(g.nodes(data=True), key=lambda x: -x[1].get("frequency", 0))[:20]:
+        print(f"  {node:<40} freq={attrs.get('frequency', 0):>5}  cluster={attrs.get('cluster_id', '?')}")
 
-# ---------------------------------------------------------------------------
-# Print edges sorted by weight descending
-# ---------------------------------------------------------------------------
+    print()
+    print("=" * 60)
+    print(f"EDGES  ({len(g.edges)} total)")
+    print("=" * 60)
+    for u, v, data in sorted(g.edges(data=True), key=lambda e: -e[2].get("weight", 0))[:20]:
+        print(f"  {u:<25} -- {v:<25}  weight={data.get('weight', 0):.4f}  pmi={data.get('pmi', 0):.4f}")
 
-print()
-print("=" * 60)
-print(f"EDGES  ({len(graph.edges)} total,  window={graph.time_window_seconds}s)")
-print("=" * 60)
-print(f"  {'SOURCE':<25} {'TARGET':<25} {'CO-OCC':>6}  {'WEIGHT':>7}")
-print(f"  {'-'*25} {'-'*25} {'-'*6}  {'-'*7}")
-for edge in sorted(graph.edges.values(), key=lambda e: (-e.weight, e.source, e.target)):
-    print(f"  {edge.source:<25} {edge.target:<25} {edge.co_occurrences:>6}  {edge.weight:>7.4f}")
+    print()
+    scores_df = compute_centrality(g, df)
+    print("=" * 60)
+    print("TOP 10 by centrality_score")
+    print("=" * 60)
+    top = (
+        scores_df[["sequence_number", "centrality_score", "cluster_id", "in_graph"]]
+        .sort_values("centrality_score", ascending=False)
+        .drop_duplicates("centrality_score")
+        .head(10)
+    )
+    print(top.to_string(index=False))
+    print()
+    print("Done.")
 
-# ---------------------------------------------------------------------------
-# Connectivity summary
-# ---------------------------------------------------------------------------
 
-print()
-print("=" * 60)
-print("CONNECTIVITY SUMMARY")
-print("=" * 60)
-from collections import defaultdict
-neighbors: dict = defaultdict(set)
-for src, tgt in graph.edges:
-    neighbors[src].add(tgt)
-    neighbors[tgt].add(src)
-
-for nid in sorted(neighbors):
-    conns = sorted(neighbors[nid])
-    print(f"  {nid}")
-    for c in conns:
-        key = (nid, c) if nid <= c else (c, nid)
-        w = graph.edges[key].weight
-        print(f"    -> {c:<28} weight={w:.4f}")
-
-print()
-print("Done.")
+if __name__ == "__main__":
+    _main()
