@@ -117,16 +117,22 @@ def _step_anomaly() -> int:
 
 
 def _step_correlation() -> int:
-    """Run the graph correlation step."""
+    """Run the graph correlation step.
+
+    Always forces a graph rebuild to prevent stale cached graphs (built from
+    different template data) from producing all-UNCAPPED centrality scores.
+    """
     import os
-
-    # Correlation module reads SESSIONIZED_LOGS_PATH from config.
-    # Point it at our canonical path.
     import common.config as cfg
-    _orig = cfg.SESSIONIZED_LOGS_PATH
 
-    # Monkey-patch so run_correlation reads from our pipeline path.
-    # This is safe — it only affects this process for the duration of the call.
+    # Delete cached graph so build_graph() always runs fresh against the
+    # current sessionized_logs.parquet.  This is safe and fast (< 1s typical).
+    graph_cache = cfg.GRAPH_PICKLE_PATH
+    if os.path.exists(graph_cache):
+        os.remove(graph_cache)
+        logger.info(f"Removed stale graph cache: {graph_cache}")
+
+    _orig = cfg.SESSIONIZED_LOGS_PATH
     cfg.SESSIONIZED_LOGS_PATH = SESSIONIZED_PATH
 
     try:

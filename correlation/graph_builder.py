@@ -43,7 +43,8 @@ from common.logger import get_logger
 
 logger = get_logger(__name__)
 
-_GRAPH_PICKLE_PATH = "data/processed/correlation_graph.pkl"
+# Use the canonical path from config so all modules share the same cache file.
+_GRAPH_PICKLE_PATH = cfg.GRAPH_PICKLE_PATH
 
 
 def build_graph(sessionized_logs: pd.DataFrame) -> nx.Graph:
@@ -137,7 +138,7 @@ def build_graph(sessionized_logs: pd.DataFrame) -> nx.Graph:
         for template in component:
             graph.nodes[template]["cluster_id"] = cluster_id
 
-    # Step 5 — persist
+    # Step 5 — persist (path comes from cfg.GRAPH_PICKLE_PATH via module-level constant)
     path = Path(_GRAPH_PICKLE_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "wb") as fh:
