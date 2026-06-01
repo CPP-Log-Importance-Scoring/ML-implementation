@@ -221,6 +221,30 @@ def _step_storage(dry_run: bool) -> int:
         if Path(SCORED_LOGS_PATH).exists():
             scored_df = pd.read_parquet(SCORED_LOGS_PATH)
             counts["scores"] = write_scores(scored_df, conn)
+        if not dry_run and Path(SCORED_LOGS_PATH).exists():
+            try:
+                import pandas as _pd
+                from pathlib import Path as _Path
+                from dashboard.llm_summary import (
+                    generate_all_summaries as _gen_summaries,
+                )
+
+                _scored_df = _pd.read_parquet(SCORED_LOGS_PATH)
+
+                _rc_df = _pd.DataFrame()
+                _rc_path = "data/processed/root_causes_df.parquet"
+
+                if _Path(_rc_path).exists():
+                    _rc_df = _pd.read_parquet(_rc_path)
+
+                _gen_summaries(_scored_df, _rc_df, batch_size=20)
+                logger.info("LLM summaries generated and cached.")
+
+            except Exception as _exc:
+                logger.warning(
+                    "LLM summary generation failed (non-fatal): %s",
+                    _exc,
+                )
 
         conn.commit()
         logger.info(f"Postgres write counts: {counts}")
