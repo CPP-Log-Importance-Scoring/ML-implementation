@@ -191,11 +191,12 @@ def compute_centrality(
     in_graph_rate = graph_scores_df["in_graph"].mean() * 100
     cluster_count = graph_scores_df["cluster_id"].nunique()
     mean_centrality = graph_scores_df["centrality_score"].mean()
-    print(
-        f"graph_scores_df: shape={graph_scores_df.shape}, "
-        f"in_graph={in_graph_rate:.1f}%, "
-        f"clusters={cluster_count}, "
-        f"mean_centrality={mean_centrality:.4f}"
+    logger.info(
+        "graph_scores_df: shape=%s, in_graph=%.1f%%, clusters=%d, mean_centrality=%.4f",
+        graph_scores_df.shape,
+        in_graph_rate,
+        cluster_count,
+        mean_centrality,
     )
 
     return graph_scores_df

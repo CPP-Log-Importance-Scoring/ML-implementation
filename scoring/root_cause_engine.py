@@ -155,10 +155,14 @@ def identify_root_causes(
     )
     n_root = int(scored_logs_df["is_root_cause"].sum())
     label_dist = scored_logs_df["label"].value_counts().to_dict()
-    print(
-        f"scored_logs_df: shape={scored_logs_df.shape}, labels={label_dist}, "
-        f"incidents={n_incidents}, cross_system_incidents={n_cross}, "
-        f"root_cause_candidates={n_root}"
+    logger.info(
+        "scored_logs_df: shape=%s, labels=%s, incidents=%d, "
+        "cross_system_incidents=%d, root_cause_candidates=%d",
+        scored_logs_df.shape,
+        label_dist,
+        n_incidents,
+        n_cross,
+        n_root,
     )
 
     # Step 5 — return
