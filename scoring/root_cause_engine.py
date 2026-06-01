@@ -29,7 +29,6 @@ _SCORED_PATH = "data/processed/scored_logs_df.parquet"
 _ROOT_CAUSES_PATH = "data/processed/root_causes_df.parquet"
 
 _SCORED_LOG_COLS = [
-    "log_id",
     "sequence_number",
     "final_score",
     "label",
