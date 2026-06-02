@@ -102,7 +102,11 @@ def assign_chains(
             recent_hist = history
         else:
             cutoff = curr_start - pd.Timedelta(hours=lookback_hours)
-            recent_hist = history[history["end_time"] >= cutoff]
+            # Enforce temporal ordering: precursor must end before current starts
+            recent_hist = history[
+                (history["end_time"] >= cutoff) &
+                (history["end_time"] < curr_start)
+            ]
 
         if len(recent_hist) == 0:
             results.append(_no_chain(curr))

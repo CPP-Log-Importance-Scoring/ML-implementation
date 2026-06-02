@@ -140,6 +140,7 @@ COUNTER_ANOMALY_PATTERNS: list = [
     r"INTERFACE_.*THRESHOLD",
     r"INTERFACE_.*ERROR.*EXCEED",
     r"INTERFACE_.*DROP.*EXCEED",
+    r"DROP",
 ]
 # Hint keywords — templates containing these but not matching COUNTER_ANOMALY_PATTERNS
 # trigger a WARNING so the pattern list can be updated as new templates are discovered
