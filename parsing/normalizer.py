@@ -81,9 +81,16 @@ def _parse_timestamp(ts_str: str) -> Optional[datetime]:
             pass
     try:
         dt = datetime.strptime(ts_str, "%b %d %H:%M:%S")
-        # TODO: year boundary — if parsed month/day is after today, assign previous year.
-        # Affects log files spanning Dec 31 → Jan 1. Deferred — not in scope this week.
-        return dt.replace(year=datetime.now().year)
+        current = datetime.now()
+
+        # BSD syslog timestamps omit the year. If the parsed month/day is in the
+        # future relative to the current date, treat it as the previous year.
+        # This keeps Dec 31 → Jan 1 log files ordered correctly.
+        if (dt.month, dt.day) > (current.month, current.day):
+            dt = dt.replace(year=current.year - 1)
+        else:
+            dt = dt.replace(year=current.year)
+        return dt
     except ValueError:
         pass
     return None
