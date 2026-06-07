@@ -43,6 +43,7 @@ from typing import Optional
 
 from common.config import SERVICE_ALIAS_MAP
 from common.logger import get_logger
+from dateutil.parser import parse
 
 logger = get_logger(__name__)
 
@@ -68,33 +69,45 @@ _PRI_SEVERITY_MAP = {
 # ---------------------------------------------------------------------------
 
 _TS_PATTERNS = [
-    re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\s+(?P<rest>.+)$"),
-    re.compile(r"^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<rest>.+)$"),
+
+    # RFC3164
+    re.compile(
+        r"^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<rest>.+)$"
+    ),
+
+    # ISO8601
+    re.compile(
+        r"^(?P<ts>\d{4}-\d{2}-\d{2}[T ][^\s]+)\s+(?P<rest>.+)$"
+    ),
+
+    # Structured event logs
+    re.compile(
+        r"^\[(?P<ts>[^\]]+)\]\s+(?P<rest>.+)$"
+    ),
 ]
 
 def _parse_timestamp(ts_str: str) -> Optional[datetime]:
+
     ts_str = ts_str.strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(ts_str, fmt)
-        except ValueError:
-            pass
+
     try:
-        dt = datetime.strptime(ts_str, "%b %d %H:%M:%S")
-        current = datetime.now()
+        dt = parse(ts_str)
 
-        # BSD syslog timestamps omit the year. If the parsed month/day is in the
-        # future relative to the current date, treat it as the previous year.
-        # This keeps Dec 31 → Jan 1 log files ordered correctly.
-        if (dt.month, dt.day) > (current.month, current.day):
-            dt = dt.replace(year=current.year - 1)
-        else:
-            dt = dt.replace(year=current.year)
+        # BSD syslog timestamps don't contain a year
+        if re.match(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}$", ts_str):
+
+            current = datetime.now()
+
+            if (dt.month, dt.day) > (current.month, current.day):
+                dt = dt.replace(year=current.year - 1)
+
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+
         return dt
-    except ValueError:
-        pass
-    return None
 
+    except Exception:
+        return None
 # ---------------------------------------------------------------------------
 # Service extraction
 # ---------------------------------------------------------------------------
@@ -207,6 +220,16 @@ def normalize_line(line: str) -> Optional[dict]:
     if ts_dt is None:
         logger.warning(f"Unparseable timestamp — skipping line: {line!r}")
         return None
+
+    if rest.startswith("EVENT:"):
+        return {
+            "raw_text": line,
+            "timestamp": ts_dt,
+            "host": "structured_event",
+            "service": "EVENT",
+            "log_level": _infer_severity(rest, pri_severity),
+            "message": rest,
+        }
 
     # First token after timestamp is the hostname
     parts = rest.split(None, 1)
