@@ -33,6 +33,8 @@ import pytest
 from common.config import (
     ANOMALY_SCORE_THRESHOLD,
     ANOMALY_DYNAMIC_K,
+    ANOMALY_FLAG_MODE,
+    ANOMALY_CONTAMINATION,
     COLD_START_FULL_CONFIDENCE_THRESHOLD,
     IF_FEATURE_COLUMNS,
     RETRAINING_TRIGGER_EVERY_K,
@@ -67,6 +69,13 @@ def build_features_df(n_rows: int = 200, n_sessions: int = 5) -> pd.DataFrame:
         "time_delta_session_start": rng.uniform(0.0, 1800.0, n_rows),
         "inter_arrival_rate":       rng.exponential(5.0, n_rows),
         "counter_proximity":        rng.uniform(0.0, 1.0, n_rows),
+        # Section-4 metric features (values + present flags)
+        "metric_zscore":            rng.uniform(0.0, 4.0, n_rows),
+        "metric_zscore_present":    rng.choice([0.0, 1.0], n_rows),
+        "drop_rate":                rng.uniform(0.0, 100.0, n_rows),
+        "drop_rate_present":        rng.choice([0.0, 1.0], n_rows),
+        "utilization":              rng.uniform(0.0, 100.0, n_rows),
+        "utilization_present":      rng.choice([0.0, 1.0], n_rows),
     })
 
 
@@ -174,12 +183,15 @@ class TestDetectScoreBounds:
         result = detect(features_df)
         scores = result["combined_score"].values
         score_std = float(scores.std())
-        threshold = (
-            float(scores.mean()) + ANOMALY_DYNAMIC_K * score_std
-            if score_std >= 1e-6
-            else ANOMALY_SCORE_THRESHOLD
-        )
-        expected = result["combined_score"] > threshold
+        # Mirror the detector's configured flag strategy (see anomaly_detector Step 6).
+        if score_std < 1e-6:
+            expected = result["combined_score"] > ANOMALY_SCORE_THRESHOLD
+        elif ANOMALY_FLAG_MODE == "quantile":
+            threshold = float(np.quantile(scores, 1.0 - ANOMALY_CONTAMINATION))
+            expected = result["combined_score"] >= threshold
+        else:  # dynamic_k
+            threshold = float(scores.mean()) + ANOMALY_DYNAMIC_K * score_std
+            expected = result["combined_score"] > threshold
         pd.testing.assert_series_equal(
             result["is_anomaly"].reset_index(drop=True),
             expected.reset_index(drop=True),

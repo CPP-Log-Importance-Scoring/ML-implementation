@@ -85,10 +85,16 @@ ML_CONFIG = {
 # Controls contribution of each signal to final score
 # ----------------------------
 
-# Severity weights
+# Severity weights.
+# HIGH and MEDIUM were added for the multi-section synthetic dataset, whose events
+# carry an explicit severity=HIGH|MEDIUM field. They are ordered between the
+# pre-existing levels so the CRITICAL > HIGH > ERROR > MEDIUM > WARN > INFO ranking
+# is preserved instead of collapsing unknown levels to DEFAULT_SEVERITY_WEIGHT.
 SEVERITY_WEIGHTS = {
     "CRITICAL": 1.0,
+    "HIGH": 0.85,
     "ERROR": 0.7,
+    "MEDIUM": 0.55,
     "WARN": 0.4,
     "INFO": 0.1,
 }
@@ -98,6 +104,11 @@ DEFAULT_SEVERITY_WEIGHT: float = 0.1
 
 # Counter anomaly proximity
 COUNTER_PROXIMITY_WINDOW_SECONDS: int = 30
+
+# Time window (seconds) for joining Section-4 numeric metrics onto event rows
+# (features/metric_features.py). A metric sample within ±this of an event is
+# considered "near" it. Scoped per scenario so incidents never cross-contaminate.
+METRIC_JOIN_WINDOW_SECONDS: int = 60
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Parsing
@@ -121,7 +132,38 @@ SERVICE_ALIAS_MAP: dict = {
     "snmpd":       "SNMP",
     "lldpd":       "LLDP",
     "cfgd":        "CONFIG",
+
+    # --- Generic vendor-neutral component names (mentor's synthetic dataset) ---
+    "spanning_tree_daemon":  "STP",
+    "redundancy_daemon":     "REDUNDANCY",
+    "forwarding_engine":     "FORWARDING",
+    "access_control_daemon": "ACL",
+    "routing_daemon":        "ROUTING",
+    "mac_learning":          "MAC",
+    "qos_scheduler_daemon":  "QOS",
+    "buffer_manager":        "BUFFER",
+    "physical_monitor":      "PHYSICAL",
+    "statistics_collector":  "STATS",
+    "system_logger":         "SYSTEM",
+    "process_monitor":       "SYSTEM",
+    "network_monitor":       "NETWORK",
+
+    # --- Routine/heartbeat services: the ~90% baseline noise. Collapsed to a
+    #     single NOISE label so the feature stage can suppress/down-weight them. ---
+    "monitoring":             "NOISE",
+    "continuous_monitoring":  "NOISE",
+    "routine_check":          "NOISE",
+    "periodic_status":        "NOISE",
+    "system_check":           "NOISE",
+    "status_verification":    "NOISE",
+    "health_check":           "NOISE",
+    "metrics_update":         "NOISE",
+    "frame_monitoring":       "NOISE",
 }
+
+# Canonical service label assigned to routine/heartbeat logs (see SERVICE_ALIAS_MAP).
+# Feature/noise-suppression logic can key off this single value.
+NOISE_SERVICE_LABEL: str = "NOISE"
 
 
 # Statistical features
@@ -156,6 +198,16 @@ FEATURES_OUTPUT_PATH: str = (
     "data/processed/features_df.parquet"
 )
 
+# --- Multi-section synthetic dataset artifacts (parsing/synthetic_dataset_loader.py) ---
+# Long/tidy numeric metrics extracted from Section 4 of each scenario file.
+# Long format means "metric not applicable to a scenario" is simply an absent row,
+# avoiding a wide sparse table full of structural NaNs.
+METRICS_DF_PATH: str = "data/processed/metrics_df.parquet"
+
+# Per-file ground-truth record from Section 7 (training_label, correlation_signals, …).
+# Used ONLY by the evaluation harness as an oracle — never fed to the model.
+SCENARIO_LABELS_PATH: str = "data/processed/scenario_labels.parquet"
+
 # ---------------------------------------------------------------------------
 # Persistent drift detection stores
 # ---------------------------------------------------------------------------
@@ -188,6 +240,13 @@ FEATURE_COLUMNS = [
     "inter_arrival_rate",
     "event_weight",
     "counter_proximity",
+    # Section-4 numeric-metric features (features/metric_features.py).
+    "metric_zscore",
+    "metric_zscore_present",
+    "drop_rate",
+    "drop_rate_present",
+    "utilization",
+    "utilization_present",
 ]
 
 # ---------------------------------------------------------------------------
@@ -243,6 +302,15 @@ IF_FEATURE_COLUMNS: list = [
     "time_delta_session_start",
     "inter_arrival_rate",
     "counter_proximity",
+    # Section-4 numeric telemetry — observed measurements (not label proxies),
+    # so safe to learn from. Paired *_present flags let the model tell a real 0
+    # from a neutrally-filled absent value.
+    "metric_zscore",
+    "metric_zscore_present",
+    "drop_rate",
+    "drop_rate_present",
+    "utilization",
+    "utilization_present",
 ]
 
 # Hybrid score weights (IF weighted higher — it captures multi-feature interactions
@@ -263,6 +331,19 @@ ANOMALY_SCORE_THRESHOLD: float = 0.5
 # k=2.0 flags scores more than 2 standard deviations above the batch mean (~top 2.3%).
 ANOMALY_DYNAMIC_K: float = 2.0
 
+# Anomaly-flag strategy:
+#   "quantile"  — flag the top ANOMALY_CONTAMINATION fraction by combined_score.
+#                 Self-adjusts to each batch and guarantees a stable, non-zero
+#                 anomaly rate.
+#   "dynamic_k" — legacy mean + k·std rule (kept for back-compat). Fragile: when
+#                 combined_score is tightly clustered the threshold can exceed the
+#                 max achievable score and flag nothing (observed: 0/935).
+ANOMALY_FLAG_MODE: str = "quantile"
+
+# Expected fraction of the batch that is anomalous (top-N flagged in quantile mode).
+# Set to the measured signal rate of the synthetic dataset (~13% non-baseline logs).
+ANOMALY_CONTAMINATION: float = 0.13
+
 # Sliding window: retrain on the last N sessions only.
 RETRAINING_SESSION_WINDOW: int = 50
 
@@ -276,11 +357,17 @@ MODEL_STORE_PATH: str = "ml/model_store"
 # Phase 4 — Importance Scoring (P4: Ujwal Hegde)
 # ---------------------------------------------------------------------------
 
-# Weights for the final importance score — 2-term formula.
-# event_weight flows through the ML model indirectly via combined_score.
-# Weights sum to 1.0.
-SCORING_ML_WEIGHT: float = 0.65
-SCORING_GRAPH_WEIGHT: float = 0.35
+# Weights for the final importance score — 3-term formula. Weights sum to 1.0.
+#   final_score = ML_WEIGHT·combined_score        (behavioral anomaly, unsupervised IF)
+#               + GRAPH_WEIGHT·centrality_score    (structural importance)
+#               + SEVERITY_WEIGHT·event_weight     (declared severity)
+# Severity is kept as its own explicit, tunable term here rather than baked into the
+# IsolationForest features. This avoids (a) leaking the severity label into an
+# unsupervised model that is then validated against severity-derived ground truth,
+# and (b) double-counting severity once the model and the score both carry it.
+SCORING_ML_WEIGHT: float = 0.5
+SCORING_GRAPH_WEIGHT: float = 0.25
+SCORING_SEVERITY_WEIGHT: float = 0.25
 
 # Label thresholds: ignore / low / medium / critical
 LABEL_IGNORE_MAX: float = 0.2
