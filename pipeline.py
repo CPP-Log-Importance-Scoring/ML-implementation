@@ -216,6 +216,8 @@ def _step_storage(dry_run: bool) -> int:
 
             # Populate incident rows used by the dashboard feed/detail pages.
             if Path("data/processed/root_causes_df.parquet").exists():
+                from common.utils import worst_label
+
                 rc_df = pd.read_parquet("data/processed/root_causes_df.parquet")
                 logs_df = pd.read_parquet(SESSIONIZED_PATH)
                 scores_with_ts = scored_df.merge(
@@ -229,7 +231,7 @@ def _step_storage(dry_run: bool) -> int:
                         start_time=("timestamp", "min"),
                         end_time=("timestamp", "max"),
                         log_count=("sequence_number", "count"),
-                        label=("label", "max"),
+                        label=("label", worst_label),
                     )
                     .reset_index()
                 )
