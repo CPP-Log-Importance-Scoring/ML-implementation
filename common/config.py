@@ -241,6 +241,12 @@ ORACLE_REPORT_PATH: str = "evaluation/results/oracle_report.txt"
 # Accumulates mean/variance across pipeline runs for cross-run drift detection.
 ZSCORE_BASELINE_STORE_PATH: str = "data/processed/zscore_baseline_store.parquet"
 
+# Max session IDs remembered per (host, template_id) for re-run dedup in the
+# Welford store. Oldest evicted first (IDs embed the session start timestamp);
+# re-running a session older than the cap would double-count it — accepted
+# trade-off so the store stays bounded instead of growing forever.
+ZSCORE_BASELINE_SEEN_CAP: int = 500
+
 # Rolling feature store for IsolationForest sliding-window retraining.
 # Holds raw feature rows from the last FEATURE_ROLLING_MAX_SESSIONS sessions.
 FEATURE_ROLLING_STORE_PATH: str = "data/processed/feature_rolling_store.parquet"
@@ -439,6 +445,15 @@ ROOT_CAUSE_TOP_N: int = 3
 # filled with the column mean of the non-null rows. Boolean columns
 # (is_anomaly, in_graph, in_sequence) are always filled with False.
 MISSING_INPUT_FILL: str = "mean"
+
+# Hard cap on the fraction of rows allowed to be missing from an upstream
+# input before scoring FAILS instead of mean-filling. Mean-filling makes a
+# missing row look perfectly average — the most dangerous disguise for rows
+# that were dropped upstream precisely because something was wrong with them.
+# A few stragglers are tolerable; a systematic gap is a pipeline bug.
+# Rows that were filled are flagged in the anomaly_missing / graph_missing
+# output columns either way.
+SCORING_MAX_MISSING_FRACTION: float = 0.05
 
 # ---------------------------------------------------------------------------
 # Phase 5.5 — Cross-Run Incident Correlation

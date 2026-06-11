@@ -5,22 +5,22 @@ total_logs: 16121
 truth_signal_count: 338
 truth_signal_rate: 0.0210
 unscored_rows: 0
-anomaly_flagged_count: 775
-anomaly_flagged_rate: 0.0481
-anomaly_tp: 13
-anomaly_fp: 762
-anomaly_fn: 325
-anomaly_precision: 0.0168
-anomaly_recall: 0.0385
-anomaly_f1: 0.0234
+anomaly_flagged_count: 623
+anomaly_flagged_rate: 0.0386
+anomaly_tp: 11
+anomaly_fp: 612
+anomaly_fn: 327
+anomaly_precision: 0.0177
+anomaly_recall: 0.0325
+anomaly_f1: 0.0229
 ranking_recall_at_k: 0.2929
-ranking_recall_at_k_ml: 0.0178
+ranking_recall_at_k_ml: 0.0148
 mean_final_score_signal: 0.3404
-mean_final_score_noise: 0.1079
-score_separation: 0.2325
-critical_capture_rate: 0.5533
-noise_suppression_ratio: 0.9198
-signal_incident_coverage: 0.9911
+mean_final_score_noise: 0.1074
+score_separation: 0.2330
+critical_capture_rate: 0.5828
+noise_suppression_ratio: 0.9252
+signal_incident_coverage: 0.9852
 scenario_detection_rate: 1.0000
 scenarios_detected: 7
 scenarios_total: 7
@@ -33,4 +33,4 @@ daily_2026-06-04       HIGH_BUFFER_FAILURE    2296        44                 2  
 daily_2026-06-05 CRITICAL_OOM_KILL_CASCADE    2279        50                 2       0.040000      True
 daily_2026-06-06      HIGH_ROUTING_FAILURE    2253        54                 1       0.018519      True
 daily_2026-06-07          HIGH_CPU_FAILURE    2372        62                 3       0.048387      True
-daily_2026-06-08       CRITICAL_HA_FAILURE    2603        57                 3       0.052632      True
+daily_2026-06-08       CRITICAL_HA_FAILURE    2603        57                 1       0.017544      True
