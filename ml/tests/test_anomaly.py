@@ -197,6 +197,8 @@ class TestDetectScoreBounds:
         # Mirror the detector's configured flag strategy (see anomaly_detector Step 6).
         if score_std < 1e-6:
             expected = result["combined_score"] > ANOMALY_SCORE_THRESHOLD
+        elif ANOMALY_FLAG_MODE == "absolute":
+            expected = result["combined_score"] > ANOMALY_SCORE_THRESHOLD
         elif ANOMALY_FLAG_MODE == "quantile":
             threshold = float(np.quantile(scores, 1.0 - ANOMALY_CONTAMINATION))
             expected = result["combined_score"] >= threshold
@@ -259,6 +261,7 @@ class TestDetectEdgeCases:
         """When all decision_function values are equal, isolation_score == 0.5."""
         mock_pipeline = MagicMock()
         mock_pipeline.n_samples_seen_ = COLD_START_FULL_CONFIDENCE_THRESHOLD
+        mock_pipeline.calibration_ = None   # exercise the per-batch fallback path
         mock_pipeline.decision_function.return_value = np.ones(len(features_df))
 
         with patch("ml.anomaly_detector._train_model", return_value=mock_pipeline):
@@ -278,6 +281,7 @@ class TestDetectEdgeCases:
         # Mock _train_model so StandardScaler doesn't choke on NaN during fitting
         mock_pipeline = MagicMock()
         mock_pipeline.n_samples_seen_ = len(df)
+        mock_pipeline.calibration_ = None   # exercise the per-batch fallback path
         mock_pipeline.decision_function.return_value = np.zeros(len(df) - n_bad)
 
         with patch("ml.anomaly_detector._train_model", return_value=mock_pipeline):

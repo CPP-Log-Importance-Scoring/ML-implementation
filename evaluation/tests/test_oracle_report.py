@@ -114,6 +114,8 @@ class TestRankingAndLabelMetrics:
         # k=3; top-3 by final_score are rows 1-3, all signal → 1.0
         metrics = _run(tmp_path, _write_fixtures(tmp_path))
         assert metrics["ranking_recall_at_k"] == pytest.approx(1.0)
+        # top-3 by combined_score are also rows 1-3 in the fixture
+        assert metrics["ranking_recall_at_k_ml"] == pytest.approx(1.0)
 
     def test_score_separation_positive(self, tmp_path):
         metrics = _run(tmp_path, _write_fixtures(tmp_path))

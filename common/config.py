@@ -369,17 +369,26 @@ ANOMALY_SCORE_THRESHOLD: float = 0.5
 ANOMALY_DYNAMIC_K: float = 2.0
 
 # Anomaly-flag strategy:
+#   "absolute"  — flag combined_score > ANOMALY_SCORE_THRESHOLD. Scores are
+#                 calibrated against the training distribution (see
+#                 _train_model), so this threshold is comparable across runs
+#                 and CAN flag nothing on a healthy batch — quantile mode
+#                 cannot. Recalibrate the threshold once healthy-day data
+#                 exists (see docs/training_data_requirements.md).
 #   "quantile"  — flag the top ANOMALY_CONTAMINATION fraction by combined_score.
 #                 Self-adjusts to each batch and guarantees a stable, non-zero
-#                 anomaly rate.
+#                 anomaly rate — including on fully healthy batches, which is
+#                 why it is no longer the default.
 #   "dynamic_k" — legacy mean + k·std rule (kept for back-compat). Fragile: when
 #                 combined_score is tightly clustered the threshold can exceed the
 #                 max achievable score and flag nothing (observed: 0/935).
-ANOMALY_FLAG_MODE: str = "quantile"
+ANOMALY_FLAG_MODE: str = "absolute"
 
 # Expected fraction of the batch that is anomalous (top-N flagged in quantile mode).
-# Set to the measured signal rate of the synthetic dataset (~13% non-baseline logs).
-ANOMALY_CONTAMINATION: float = 0.13
+# Was 0.13 ("non-baseline" line rate of the synthetic dataset) — the oracle
+# harness measured the true severity-signal rate at ~2.1%, so 0.13 flagged ~6x
+# too many rows (precision 0.02). Kept near the true rate for quantile mode.
+ANOMALY_CONTAMINATION: float = 0.03
 
 # Sliding window: retrain on the last N sessions only.
 RETRAINING_SESSION_WINDOW: int = 50
@@ -407,9 +416,15 @@ SCORING_GRAPH_WEIGHT: float = 0.25
 SCORING_SEVERITY_WEIGHT: float = 0.25
 
 # Label thresholds: ignore / low / medium / critical
-LABEL_IGNORE_MAX: float = 0.2
-LABEL_LOW_MAX: float = 0.5
-LABEL_MEDIUM_MAX: float = 0.75
+# Retuned 2026-06-11 against the oracle report on the 7-day synthetic dataset:
+# the old (0.2/0.5/0.75) boundaries sat above the entire score distribution —
+# 0 rows ever reached "critical" and noise suppression was ~0. Current values
+# are anchored to the measured distribution (signal p1≈0.25, median≈0.31):
+# capture(med+)=0.55, signal ignored=0.3%, noise suppression=0.92.
+# Recalibrate alongside ANOMALY_SCORE_THRESHOLD once healthy-day data exists.
+LABEL_IGNORE_MAX: float = 0.25
+LABEL_LOW_MAX: float = 0.30
+LABEL_MEDIUM_MAX: float = 0.50
 # Anything above LABEL_MEDIUM_MAX → critical
 
 # DBSCAN clustering parameters (incident_clusterer.py)

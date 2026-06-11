@@ -138,8 +138,18 @@ def run_oracle_report(
         if k > 0:
             top_k = df.nlargest(k, "final_score")
             metrics["ranking_recall_at_k"] = float(top_k["is_signal"].mean())
+            # ML-only ranking. final_score's severity term IS the truth
+            # definition (event_weight is a deterministic map of log_level),
+            # so ranking_recall_at_k is circular for that term — it mostly
+            # measures how much the ML term dilutes severity. This metric is
+            # the non-circular complement: how well the unsupervised stage
+            # alone ranks severity-truth rows.
+            metrics["ranking_recall_at_k_ml"] = float(
+                df.nlargest(k, "combined_score")["is_signal"].mean()
+            )
         else:
             metrics["ranking_recall_at_k"] = 0.0
+            metrics["ranking_recall_at_k_ml"] = 0.0
         sig_scores = df.loc[df["is_signal"], "final_score"]
         noise_scores = df.loc[~df["is_signal"], "final_score"]
         metrics["mean_final_score_signal"] = float(sig_scores.mean()) if len(sig_scores) else 0.0

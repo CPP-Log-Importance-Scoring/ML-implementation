@@ -322,10 +322,13 @@ class TestLabelMapper:
         assert map_labels(self._df([0.1]))["label"].iloc[0] == "ignore"
 
     def test_low_label(self):
-        assert map_labels(self._df([0.35]))["label"].iloc[0] == "low"
+        # Midpoints of the configured bands, so threshold retunes don't break these tests
+        mid_low = (cfg.LABEL_IGNORE_MAX + cfg.LABEL_LOW_MAX) / 2
+        assert map_labels(self._df([mid_low]))["label"].iloc[0] == "low"
 
     def test_medium_label(self):
-        assert map_labels(self._df([0.6]))["label"].iloc[0] == "medium"
+        mid_medium = (cfg.LABEL_LOW_MAX + cfg.LABEL_MEDIUM_MAX) / 2
+        assert map_labels(self._df([mid_medium]))["label"].iloc[0] == "medium"
 
     def test_critical_label(self):
         assert map_labels(self._df([0.9]))["label"].iloc[0] == "critical"
