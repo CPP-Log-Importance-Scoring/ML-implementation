@@ -60,17 +60,8 @@ logger = get_logger(__name__)
 STEPS = ["parsing", "features", "anomaly", "correlation", "scoring", "cross_run", "evaluate", "storage"]
 
 # ---------------------------------------------------------------------------
-# Output paths
+# Output paths are centralized in common/config.py
 # ---------------------------------------------------------------------------
-
-SESSIONIZED_PATH  = "data/processed/sessionized_logs.parquet"
-FEATURES_PATH     = "data/processed/features_df.parquet"
-ANOMALY_PATH      = "data/processed/anomaly_df.parquet"
-GRAPH_SCORES_PATH = "data/processed/graph_scores_df.parquet"
-SCORED_LOGS_PATH  = "data/processed/scored_logs_df.parquet"
-
-Path("data/processed").mkdir(parents=True, exist_ok=True)
-
 
 # ---------------------------------------------------------------------------
 # Step implementations
@@ -109,17 +100,16 @@ def _step_parsing(log_file: str, input_mode: str = "auto") -> int:
     if effective == "synthetic":
         logger.info(f"Parsing synthetic dataset directory: {log_file}")
         from parsing.synthetic_dataset_loader import run as load_synthetic
-        df = load_synthetic(log_file, output_path=SESSIONIZED_PATH)
-
+        df = load_synthetic(log_file, output_path=cfg.SESSIONIZED_LOGS_PATH)
     elif effective == "syslog":
         if p.is_dir():
             logger.info(f"Parsing syslog directory (run_directory): {log_file}")
             from parsing.sessionizer import run_directory
-            df = run_directory(log_file, output_path=SESSIONIZED_PATH)
+            df = run_directory(log_file, output_path=cfg.SESSIONIZED_LOGS_PATH)
         elif p.exists():
             logger.info(f"Parsing raw log file: {log_file}")
             from parsing.sessionizer import run as sessionize
-            df = sessionize(log_file, output_path=SESSIONIZED_PATH)
+            df = sessionize(log_file, output_path=cfg.SESSIONIZED_LOGS_PATH)
         else:
             logger.warning(
                 f"Log file not found: {log_file}. "
@@ -128,10 +118,11 @@ def _step_parsing(log_file: str, input_mode: str = "auto") -> int:
             from scripts.generate_real_logs import generate_dataset
             from common.utils import save_parquet
 
+            # generate_dataset() runs the real parser and returns the canonical DataFrame.
+            # Re-save under the pipeline's path in case config paths differ.
             df = generate_dataset()
-            Path(SESSIONIZED_PATH).parent.mkdir(parents=True, exist_ok=True)
-            save_parquet(df, SESSIONIZED_PATH)
-
+            Path(cfg.SESSIONIZED_LOGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+            save_parquet(df, cfg.SESSIONIZED_LOGS_PATH)
     else:
         raise ValueError(f"Unknown input_mode: {input_mode!r}. Use 'auto', 'syslog', or 'synthetic'.")
 
@@ -141,7 +132,7 @@ def _step_parsing(log_file: str, input_mode: str = "auto") -> int:
 def _step_features() -> int:
     """Run the feature engineering step."""
     from features.feature_pipeline import run_pipeline
-    df = run_pipeline(SESSIONIZED_PATH)
+    df = run_pipeline(cfg.SESSIONIZED_LOGS_PATH)
     return len(df)
 
 
@@ -150,8 +141,8 @@ def _step_anomaly() -> int:
     from pathlib import Path as _Path
     from ml.anomaly_detector import run
     df = run(
-        features_path=_Path(FEATURES_PATH),
-        output_path=_Path(ANOMALY_PATH),
+        features_path=Path(cfg.FEATURES_OUTPUT_PATH),
+        output_path=Path(cfg.ANOMALY_PATH),
     )
     return len(df)
 
@@ -170,17 +161,11 @@ def _step_correlation() -> int:
         os.remove(graph_cache)
         logger.info(f"Removed stale graph cache: {graph_cache}")
 
-    _orig = cfg.SESSIONIZED_LOGS_PATH
-    cfg.SESSIONIZED_LOGS_PATH = SESSIONIZED_PATH
-
-    try:
-        from correlation.run_correlation import run
-        run()
-    finally:
-        cfg.SESSIONIZED_LOGS_PATH = _orig
+    from correlation.run_correlation import run
+    run()
 
     import pandas as pd
-    df = pd.read_parquet(GRAPH_SCORES_PATH)
+    df = pd.read_parquet(cfg.GRAPH_SCORES_PATH)
     return len(df)
 
 
@@ -239,27 +224,27 @@ def _step_storage(dry_run: bool) -> int:
 
         counts = {}
 
-        if Path(SESSIONIZED_PATH).exists():
-            logs_df = pd.read_parquet(SESSIONIZED_PATH)
+        if Path(cfg.SESSIONIZED_LOGS_PATH).exists():
+            logs_df = pd.read_parquet(cfg.SESSIONIZED_LOGS_PATH)
             counts["logs"] = write_logs(logs_df, conn)
 
-        if Path(FEATURES_PATH).exists():
-            feat_df = pd.read_parquet(FEATURES_PATH)
+        if Path(cfg.FEATURES_OUTPUT_PATH).exists():
+            feat_df = pd.read_parquet(cfg.FEATURES_OUTPUT_PATH)
             counts["features"] = write_features(feat_df, conn)
 
-        if Path(ANOMALY_PATH).exists():
-            anom_df = pd.read_parquet(ANOMALY_PATH)
+        if Path(cfg.ANOMALY_PATH).exists():
+            anom_df = pd.read_parquet(cfg.ANOMALY_PATH)
             counts["anomalies"] = write_anomalies(anom_df, conn)
 
-        if Path(SCORED_LOGS_PATH).exists():
-            scored_df = pd.read_parquet(SCORED_LOGS_PATH)
+        if Path(cfg.SCORED_LOGS_PATH).exists():
+            scored_df = pd.read_parquet(cfg.SCORED_LOGS_PATH)
             counts["scores"] = write_scores(scored_df, conn)
 
             if Path("data/processed/root_causes_df.parquet").exists():
                 from common.utils import worst_label
 
                 rc_df = pd.read_parquet("data/processed/root_causes_df.parquet")
-                logs_df = pd.read_parquet(SESSIONIZED_PATH)
+                logs_df = pd.read_parquet(cfg.SESSIONIZED_LOGS_PATH)
                 scores_with_ts = scored_df.merge(
                     logs_df[["sequence_number", "timestamp"]],
                     on="sequence_number",
@@ -300,7 +285,7 @@ def _step_storage(dry_run: bool) -> int:
                 incidents_df["root_cause_log_id"] = incidents_df["root_cause_log_id"].apply(_normalize_root_cause_log_id)
                 counts["incidents"] = write_incidents(incidents_df, conn)
 
-        if not dry_run and Path(SCORED_LOGS_PATH).exists():
+        if not dry_run and Path(cfg.SCORED_LOGS_PATH).exists():
             try:
                 import pandas as _pd
                 from pathlib import Path as _Path
@@ -308,7 +293,8 @@ def _step_storage(dry_run: bool) -> int:
                     generate_all_summaries as _gen_summaries,
                 )
 
-                _scored_df = _pd.read_parquet(SCORED_LOGS_PATH)
+                _scored_df = _pd.read_parquet(cfg.SCORED_LOGS_PATH)
+
                 _rc_df = _pd.DataFrame()
                 _rc_path = "data/processed/root_causes_df.parquet"
                 if _Path(_rc_path).exists():
@@ -435,11 +421,11 @@ def run_pipeline(
 def _print_output_summary() -> None:
     """Log a summary of output files produced."""
     outputs = [
-        ("sessionized_logs",   SESSIONIZED_PATH),
-        ("features_df",        FEATURES_PATH),
-        ("anomaly_df",         ANOMALY_PATH),
-        ("graph_scores_df",    GRAPH_SCORES_PATH),
-        ("scored_logs_df",     SCORED_LOGS_PATH),
+        ("sessionized_logs",   cfg.SESSIONIZED_LOGS_PATH),
+        ("features_df",        cfg.FEATURES_OUTPUT_PATH),
+        ("anomaly_df",         cfg.ANOMALY_PATH),
+        ("graph_scores_df",    cfg.GRAPH_SCORES_PATH),
+        ("scored_logs_df",     cfg.SCORED_LOGS_PATH),
         ("incident_history",   cfg.INCIDENT_HISTORY_PATH),
     ]
     logger.info("Output files:")

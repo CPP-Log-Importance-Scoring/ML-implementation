@@ -56,7 +56,8 @@ GRAPH_PICKLE_PATH: str = "data/processed/correlation_graph.gpickle"
 GRAPH_JSON_PATH: str = "data/processed/correlation_graph.json"
 SEQUENCES_JSON_PATH: str = "data/processed/sequences.json"
 GRAPH_SCORES_PATH: str = "data/processed/graph_scores_df.parquet"
-
+ANOMALY_PATH: str = "data/processed/anomaly_df.parquet"
+SCORED_LOGS_PATH: str = "data/processed/scored_logs_df.parquet"
 
 # ---------------------------------------------------------------------------
 # Dynamic environment-variable access (credentials, service URLs, etc.)
