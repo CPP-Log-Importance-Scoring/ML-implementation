@@ -393,6 +393,10 @@ def run_pipeline(
                 f"DONE: {step} — {row_count:,} rows — {elapsed:.2f}s"
             )
 
+            if row_count == 0 and step not in ("evaluate", "storage"):
+                logger.error(f"FAILED at step '{step}': Produced 0 rows. Stopping pipeline.")
+                sys.exit(1)
+
         except FileNotFoundError as exc:
             logger.error(
                 f"FAILED at step '{step}': {exc}\n"
