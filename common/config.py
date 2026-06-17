@@ -56,7 +56,8 @@ GRAPH_PICKLE_PATH: str = "data/processed/correlation_graph.gpickle"
 GRAPH_JSON_PATH: str = "data/processed/correlation_graph.json"
 SEQUENCES_JSON_PATH: str = "data/processed/sequences.json"
 GRAPH_SCORES_PATH: str = "data/processed/graph_scores_df.parquet"
-
+ANOMALY_PATH: str = "data/processed/anomaly_df.parquet"
+SCORED_LOGS_PATH: str = "data/processed/scored_logs_df.parquet"
 
 # ---------------------------------------------------------------------------
 # Dynamic environment-variable access (credentials, service URLs, etc.)
@@ -72,13 +73,6 @@ def __getattr__(name: str):
 
     # Fetch the requested variable (e.g., DB_URL, ELASTIC_URL) directly from the .env file
     return get_env(name)
-
-ML_CONFIG = {
-    "contamination": 0.05,   # % of anomalies expected
-    "weight_isolation": 0.7,
-    "weight_zscore": 0.3,
-    "training_window_sessions": 50
-}
 
 # ----------------------------
 # SCORING WEIGHTS
@@ -293,12 +287,6 @@ FEATURE_COLUMNS = [
 # 0.05 = 5% anomaly rate assumption. Adjust if first-run anomaly rate looks off.
 # If you change this, document it in the JSON sidecar saved alongside the model.
 CONTAMINATION: float = 0.05
-
-# Hybrid score weights: combined_score = w1 * isolation_score + w2 * zscore_norm
-# Must sum to 1.0. w1 > w2 because IsolationForest captures feature interactions
-# that z-score misses; but z-score keeps the system interpretable.
-WEIGHT_ISOLATION: float = 0.65   # w1
-WEIGHT_ZSCORE: float = 0.35      # w2
 
 # A log is flagged is_anomaly=True when combined_score > this threshold.
 # 0.5 = middle of [0,1] range; tune upward to reduce false positives.
