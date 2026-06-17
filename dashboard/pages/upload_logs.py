@@ -36,6 +36,8 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
 
 from ui import apply_theme  # noqa: E402  (must be after sys.path bootstrap)
 
+from dashboard.data import db
+
 # ---------------------------------------------------------------------------
 # Page config & theme
 # ---------------------------------------------------------------------------
@@ -346,7 +348,7 @@ if st.session_state.job_status in ("success", "failed"):
 
             # ── Overview metrics ─────────────────────────────────────────
             total_rows      = len(df)
-            total_anomalies = int(df["is_anomaly"].sum()) if "is_anomaly" in df.columns else "N/A"
+            total_anomalies = db.get_anomaly_count()
             label_col_exists = "label" in df.columns
             total_incidents = (
                 df[df["label"].isin(["medium", "critical"])].shape[0]
@@ -356,7 +358,7 @@ if st.session_state.job_status in ("success", "failed"):
             m1, m2, m3 = st.columns(3)
             m1.metric("Total rows processed", f"{total_rows:,}")
             m2.metric("Anomalies detected",   total_anomalies if isinstance(total_anomalies, str) else f"{total_anomalies:,}")
-            m3.metric("Incidents (med+crit)", total_incidents if isinstance(total_incidents, str) else f"{total_incidents:,}")
+            m3.metric("Medium/Critical Logs", total_incidents if isinstance(total_incidents, str) else f"{total_incidents:,}")
 
             # ── Severity distribution ────────────────────────────────────
             if label_col_exists:
