@@ -59,15 +59,9 @@ services:
              python pipeline.py --log-file data/raw/real_logs_2day.log"
     environment:
       - DB_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_HOST=postgres
       - ELASTIC_URL=http://elasticsearch:9200
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
@@ -92,15 +86,9 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - DB_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=${POSTGRES_DB}
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_HOST=postgres
       - ELASTIC_URL=http://elasticsearch:9200
     depends_on:
       postgres:

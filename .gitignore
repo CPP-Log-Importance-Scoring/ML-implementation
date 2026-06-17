@@ -9,8 +9,8 @@ venv/
 # VS Code (optional)
 .vscode/
 
-# Data files (future)
-data/
+# Data files (future) — anchored to repo root so dashboard/data/ stays tracked
+/data/
 *.log
 *.parquet
 

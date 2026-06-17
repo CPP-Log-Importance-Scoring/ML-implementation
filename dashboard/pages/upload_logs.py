@@ -9,7 +9,8 @@ Workflow
 --------
 1. User uploads files via st.file_uploader.
 2. On "Analyze", files are staged into data/raw/uploads/<batch_id>/.
-3. pipeline.py is launched as a subprocess with --input-mode syslog.
+3. pipeline.py is launched as a subprocess; --input-mode is auto-detected from
+   the staged file contents (synthetic 7-section vs flat syslog) or chosen by the user.
 4. Stdout/stderr are tailed from a per-batch pipeline.log file.
 5. On success, a summary is rendered from data/processed/scored_logs_df.parquet.
 """
@@ -87,14 +88,37 @@ def _stage_files(uploaded_files, batch_dir: Path) -> list[Path]:
     return staged
 
 
-def _launch_pipeline(batch_dir: Path, dry_run: bool) -> tuple[subprocess.Popen, Path]:
+def _detect_input_mode(staged: list[Path]) -> str:
+    """Resolve the pipeline --input-mode from the staged file contents.
+
+    The 7-section vendor-neutral / synthetic format is a structured document
+    marked by ``## SECTION`` headers; it must go through the synthetic loader.
+    Anything else is treated as flat syslog. We cannot defer to pipeline.py's
+    own ``auto`` mode here because the dashboard always passes a *directory*,
+    and ``auto`` maps every directory to ``synthetic`` — which would misparse a
+    directory of flat syslog files.
+    """
+    for path in staged:
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:8192]
+        except Exception:
+            continue
+        if "## SECTION" in head:
+            return "synthetic"
+    return "syslog"
+
+
+def _launch_pipeline(batch_dir: Path, dry_run: bool, input_mode: str) -> tuple[subprocess.Popen, Path]:
     """Launch pipeline.py as a subprocess and return (process, log_path)."""
-    log_path = batch_dir / "pipeline.log"
+    # Write the run log as a SIBLING of the batch dir, not inside it — otherwise
+    # the directory parsers (synthetic loader / syslog run_directory both glob
+    # ``<batch_dir>/*.log``) would ingest the pipeline's own log file.
+    log_path = batch_dir.parent / f"{batch_dir.name}.pipeline.log"
     cmd = [
         sys.executable,
         str(_PROJECT_ROOT / "pipeline.py"),
         "--log-file", str(batch_dir),
-        "--input-mode", "syslog",
+        "--input-mode", input_mode,
     ]
     if dry_run:
         cmd.append("--dry-run")
@@ -144,6 +168,7 @@ def _init_state() -> None:
         "job_proc":       None,   # subprocess.Popen
         "job_status":     None,   # "running" | "success" | "failed"
         "job_dry_run":    False,
+        "job_input_mode": None,   # str  — resolved pipeline --input-mode
         "job_staged":     [],     # list[str] — staged file names
     }
     for k, v in defaults.items():
@@ -222,6 +247,14 @@ if not job_running and not job_finished:
         type=["log", "txt"],
     )
 
+    mode_choice = st.selectbox(
+        "Parsing mode",
+        ["Auto-detect", "Syslog (flat RFC 3164)", "Synthetic (7-section structured)"],
+        help="Auto-detect inspects the uploaded files: structured 7-section logs "
+             "(with '## SECTION' markers) use the synthetic loader; everything else "
+             "uses the flat syslog sessionizer.",
+    )
+
     dry_run_toggle = st.checkbox(
         "Dry run (skip Postgres write)",
         value=False,
@@ -250,21 +283,30 @@ if not job_running and not job_finished:
             st.error(f"Failed to stage uploaded files: {exc}")
             st.stop()
 
+        # ── Resolve parsing mode ──────────────────────────────────────────
+        _mode_map = {
+            "Auto-detect": None,  # resolved from file contents below
+            "Syslog (flat RFC 3164)": "syslog",
+            "Synthetic (7-section structured)": "synthetic",
+        }
+        input_mode = _mode_map[mode_choice] or _detect_input_mode(staged)
+
         # ── Launch pipeline ───────────────────────────────────────────────
         try:
-            proc, log_path = _launch_pipeline(batch_dir, dry_run=dry_run_toggle)
+            proc, log_path = _launch_pipeline(batch_dir, dry_run=dry_run_toggle, input_mode=input_mode)
         except Exception as exc:
             st.error(f"Failed to launch pipeline: {exc}")
             st.stop()
 
         # ── Persist state ─────────────────────────────────────────────────
-        st.session_state.job_batch_id  = batch_id
-        st.session_state.job_batch_dir = batch_dir
-        st.session_state.job_log_path  = log_path
-        st.session_state.job_proc      = proc
-        st.session_state.job_status    = "running"
-        st.session_state.job_dry_run   = dry_run_toggle
-        st.session_state.job_staged    = [f.name for f in staged]
+        st.session_state.job_batch_id   = batch_id
+        st.session_state.job_batch_dir  = batch_dir
+        st.session_state.job_log_path   = log_path
+        st.session_state.job_proc       = proc
+        st.session_state.job_status     = "running"
+        st.session_state.job_dry_run    = dry_run_toggle
+        st.session_state.job_input_mode = input_mode
+        st.session_state.job_staged     = [f.name for f in staged]
 
         st.rerun()
 
@@ -285,6 +327,7 @@ if st.session_state.job_status == "running":
         st.info(
             f"**Batch:** `{st.session_state.job_batch_id}`  \n"
             f"**Files staged:** {', '.join(st.session_state.job_staged)}  \n"
+            f"**Parsing mode:** `{st.session_state.job_input_mode}`  \n"
             f"**Dry run:** {'Yes' if st.session_state.job_dry_run else 'No'}"
         )
     with meta_col:
@@ -416,7 +459,7 @@ if st.session_state.job_status in ("success", "failed"):
         # Clear job state so the upload form reappears
         for key in [
             "job_batch_id", "job_batch_dir", "job_log_path",
-            "job_proc", "job_status", "job_dry_run", "job_staged",
+            "job_proc", "job_status", "job_dry_run", "job_input_mode", "job_staged",
         ]:
             st.session_state[key] = None if key != "job_staged" else []
         st.rerun()
