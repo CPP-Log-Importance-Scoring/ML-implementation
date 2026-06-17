@@ -1,11 +1,12 @@
 """
 parsing/sessionizer.py
 ======================
-Converts a raw syslog file into sessionized_logs.parquet.
+Converts a raw syslog file (or directory of syslog files) into
+sessionized_logs.parquet.
 
 Pipeline
 --------
-1. Read raw log lines from the input file.
+1. Read raw log lines from the input file (or all .log/.txt files in a directory).
 2. Normalize each line via normalizer.normalize_line() →
    {raw_text, timestamp, host, service, log_level, message}.
 3. Parse the message through DrainParser to obtain template_id.
@@ -38,6 +39,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import List
 
 import pandas as pd
 
@@ -118,8 +120,78 @@ def _derive_event_action(service: str, template_id: str) -> str:
     return parts[1] if len(parts) > 1 else template_id
 
 
+def _parse_lines_into_rows(
+    file_path: Path,
+    parser: DrainParser,
+    start_seq_num: int = 1,
+) -> tuple[list[dict], int, int]:
+    """Feed a single file's lines through the normalizer and DrainParser.
+
+    Returns:
+        (rows, next_seq_num, skipped_count)
+        rows contains dicts with _cluster (not yet resolved to template_id).
+    """
+    rows: list[dict] = []
+    seq_num = start_seq_num
+    skipped = 0
+
+    with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parsed = normalize_line(line)
+            if parsed is None:
+                skipped += 1
+                continue
+
+            cluster = parser.add_log_message_cluster(
+                parsed["message"], sequence_number=seq_num
+            )
+
+            rows.append({
+                "sequence_number": seq_num,
+                "timestamp":       parsed["timestamp"],
+                "source_type":     DEFAULT_SOURCE_TYPE,
+                "service":         parsed["service"],
+                "host":            parsed["host"],
+                "log_level":       parsed["log_level"],
+                "_cluster":        cluster,
+                "event_weight":    SEVERITY_WEIGHTS.get(
+                    parsed["log_level"], DEFAULT_SEVERITY_WEIGHT
+                ),
+                "message":         parsed["message"],
+                "_raw_text":       parsed["raw_text"],
+            })
+            seq_num += 1
+
+    return rows, seq_num, skipped
+
+
+def _rows_to_dataframe(rows: list[dict], parser: DrainParser) -> pd.DataFrame:
+    """Resolve Drain templates, assign sessions, compute derived columns."""
+    # Pass 2: resolve final collision-safe template slugs now that Drain is stable.
+    for row in rows:
+        row["template_id"] = parser.resolve_template_id(row.pop("_cluster"))
+
+    df = pd.DataFrame(rows)
+    df = _assign_sessions(df)
+
+    df["event_type"] = df["service"]
+    df["event_action"] = df.apply(
+        lambda r: _derive_event_action(r["service"], r["template_id"]), axis=1
+    )
+
+    df["frequency"] = (
+        df.groupby(["session_id", "template_id"])["template_id"]
+        .transform("count")
+        .astype(int)
+    )
+
+    df["metadata"] = df["_raw_text"].apply(lambda t: json.dumps({"raw_text": t}))
+    df = df.drop(columns=["_raw_text"])
+    return df
+
+
 # ---------------------------------------------------------------------------
-# Main entry point
+# Public API — single file
 # ---------------------------------------------------------------------------
 
 def run(
@@ -146,38 +218,7 @@ def run(
     logger.info(f"Reading raw logs from {input_path}")
 
     parser = DrainParser()
-    rows = []
-    seq_num = 0
-    skipped = 0
-
-    # Pass 1: feed every message through Drain and store the cluster object.
-    # template_id() is NOT called here — Drain templates are still evolving.
-    with open(input_path, "r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            parsed = normalize_line(line)
-            if parsed is None:
-                skipped += 1
-                continue
-
-            seq_num += 1
-            cluster = parser.add_log_message_cluster(
-                parsed["message"], sequence_number=seq_num
-            )
-
-            rows.append({
-                "sequence_number": seq_num,
-                "timestamp": parsed["timestamp"],
-                "source_type": DEFAULT_SOURCE_TYPE,
-                "service": parsed["service"],
-                "host": parsed["host"],
-                "log_level": parsed["log_level"],
-                "_cluster": cluster,
-                "event_weight": SEVERITY_WEIGHTS.get(
-                    parsed["log_level"], DEFAULT_SEVERITY_WEIGHT
-                ),
-                "message": parsed["message"],
-                "_raw_text": parsed["raw_text"],
-            })
+    rows, _, skipped = _parse_lines_into_rows(input_path, parser, start_seq_num=1)
 
     if not rows:
         raise ValueError(
@@ -187,28 +228,96 @@ def run(
 
     logger.info(f"Parsed {len(rows):,} lines ({skipped} skipped) from {input_path}")
 
-    # Pass 2: Drain templates are now stable — resolve final collision-safe slugs.
-    # session_id assignment and frequency groupby both run after this point.
-    for row in rows:
-        row["template_id"] = parser.resolve_template_id(row.pop("_cluster"))
+    df = _rows_to_dataframe(rows, parser)
 
-    df = pd.DataFrame(rows)
-    df = _assign_sessions(df)
+    validate_schema(df, REQUIRED_OUTPUT_COLUMNS)
+    save_parquet(df[REQUIRED_OUTPUT_COLUMNS], output_path)
 
-    df["event_type"] = df["service"]
-    df["event_action"] = df.apply(
-        lambda r: _derive_event_action(r["service"], r["template_id"]), axis=1
+    logger.info(
+        f"Wrote {len(df):,} rows → {output_path} "
+        f"({df['session_id'].nunique()} sessions, "
+        f"{df['template_id'].nunique()} templates)"
+    )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Public API — directory of syslog files (Feature #51)
+# ---------------------------------------------------------------------------
+
+def run_directory(
+    input_dir: str,
+    output_path: str = SESSIONIZED_LOGS_PATH,
+) -> pd.DataFrame:
+    """Parse all .log and .txt files in a directory as one continuous syslog stream.
+
+    Files are processed in sorted filename order so sequence_number is
+    deterministic across repeated runs.  A single DrainParser instance is
+    shared across all files so templates are built from the full corpus.
+
+    Args:
+        input_dir:   Path to a directory containing .log and/or .txt files.
+        output_path: Destination parquet path (parent dirs created if needed).
+
+    Returns:
+        The combined sessionized DataFrame.
+
+    Raises:
+        FileNotFoundError: If input_dir does not exist or is not a directory.
+        ValueError:        If no .log/.txt files are found, or none have
+                           parseable log lines.
+    """
+    dir_path = Path(input_dir)
+    if not dir_path.exists():
+        raise FileNotFoundError(f"Input directory not found: {input_dir}")
+    if not dir_path.is_dir():
+        raise FileNotFoundError(f"Expected a directory, got a file: {input_dir}")
+
+    # Collect and sort files deterministically.
+    log_files: List[Path] = sorted(
+        [f for f in dir_path.iterdir()
+         if f.is_file() and f.suffix.lower() in (".log", ".txt")]
     )
 
-    # frequency: count of this template_id within its session
-    df["frequency"] = (
-        df.groupby(["session_id", "template_id"])["template_id"]
-        .transform("count")
-        .astype(int)
+    if not log_files:
+        raise ValueError(
+            f"No .log or .txt files found in {input_dir}. "
+            "Check that the directory contains syslog-formatted log files."
+        )
+
+    logger.info(
+        f"run_directory: processing {len(log_files)} file(s) from {input_dir}"
     )
 
-    df["metadata"] = df["_raw_text"].apply(lambda t: json.dumps({"raw_text": t}))
-    df = df.drop(columns=["_raw_text"])
+    # Single shared DrainParser so templates are learned across all files.
+    parser = DrainParser()
+    all_rows: list[dict] = []
+    total_skipped = 0
+    seq_num = 1  # continuous across files
+
+    for log_file in log_files:
+        logger.info(f"  Reading: {log_file.name}")
+        file_rows, seq_num, skipped = _parse_lines_into_rows(
+            log_file, parser, start_seq_num=seq_num
+        )
+        all_rows.extend(file_rows)
+        total_skipped += skipped
+        logger.info(
+            f"    → {len(file_rows):,} parsed, {skipped} skipped"
+        )
+
+    if not all_rows:
+        raise ValueError(
+            f"No parseable log lines found across all files in {input_dir}. "
+            "Check that the files contain syslog-formatted entries."
+        )
+
+    logger.info(
+        f"run_directory: total {len(all_rows):,} lines parsed "
+        f"({total_skipped} skipped) across {len(log_files)} file(s)"
+    )
+
+    df = _rows_to_dataframe(all_rows, parser)
 
     validate_schema(df, REQUIRED_OUTPUT_COLUMNS)
     save_parquet(df[REQUIRED_OUTPUT_COLUMNS], output_path)
@@ -228,12 +337,12 @@ def run(
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="Sessionize a raw syslog file.")
+    ap = argparse.ArgumentParser(description="Sessionize a raw syslog file or directory.")
     ap.add_argument(
         "input",
         nargs="?",
         default="data/raw/sample.log",
-        help="Path to raw syslog file (default: data/raw/sample.log)",
+        help="Path to raw syslog file or directory (default: data/raw/sample.log)",
     )
     ap.add_argument(
         "--output",
@@ -242,7 +351,12 @@ if __name__ == "__main__":
     )
     args = ap.parse_args()
 
-    df = run(args.input, args.output)
+    p = Path(args.input)
+    if p.is_dir():
+        df = run_directory(args.input, args.output)
+    else:
+        df = run(args.input, args.output)
+
     print(f"Sessions : {df['session_id'].nunique()}")
     print(f"Templates: {df['template_id'].nunique()}")
     print(f"Rows     : {len(df):,}")

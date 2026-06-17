@@ -32,6 +32,9 @@ Usage
   # Use a specific raw log file as input to the parsing step
   python pipeline.py --log-file data/raw/cx_switches.log
 
+  # Upload a directory of syslog files (NOT synthetic format)
+  python pipeline.py --log-file data/raw/uploads/20260616_153001_8d4c2a --input-mode syslog
+
 Step names (for --from-step)
 -----------------------------
   parsing | features | anomaly | correlation | scoring | cross_run | evaluate | storage
@@ -43,7 +46,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from common.logger import get_logger
 import common.config as cfg
@@ -60,9 +63,9 @@ STEPS = ["parsing", "features", "anomaly", "correlation", "scoring", "cross_run"
 # Output paths
 # ---------------------------------------------------------------------------
 
-SESSIONIZED_PATH = "data/processed/sessionized_logs.parquet"
-FEATURES_PATH    = "data/processed/features_df.parquet"
-ANOMALY_PATH     = "data/processed/anomaly_df.parquet"
+SESSIONIZED_PATH  = "data/processed/sessionized_logs.parquet"
+FEATURES_PATH     = "data/processed/features_df.parquet"
+ANOMALY_PATH      = "data/processed/anomaly_df.parquet"
 GRAPH_SCORES_PATH = "data/processed/graph_scores_df.parquet"
 SCORED_LOGS_PATH  = "data/processed/scored_logs_df.parquet"
 
@@ -73,37 +76,64 @@ Path("data/processed").mkdir(parents=True, exist_ok=True)
 # Step implementations
 # ---------------------------------------------------------------------------
 
-def _step_parsing(log_file: str) -> int:
+def _step_parsing(log_file: str, input_mode: str = "auto") -> int:
     """Run the parsing / sessionization step.
 
-    Reads a raw syslog file and writes sessionized_logs.parquet.
-    If no log file is provided, generates synthetic data instead.
+    Reads a raw syslog file (or directory of syslog files) and writes
+    sessionized_logs.parquet.
+
+    Args:
+        log_file:   Path to a raw syslog file or directory.
+        input_mode: One of "auto" | "syslog" | "synthetic".
+                    - "auto"      : existing behaviour (dir→synthetic, file→sessionizer).
+                    - "syslog"    : always use the real syslog sessionizer.
+                                    Directories are handled via sessionizer.run_directory().
+                    - "synthetic" : always use the synthetic dataset loader.
     """
     p = Path(log_file)
 
-    if p.is_dir():
-        # A directory is treated as the mentor's multi-section synthetic dataset.
-        # The section-aware loader also emits metrics_df.parquet + scenario_labels.parquet.
+    # ------------------------------------------------------------------ #
+    # Resolve effective mode
+    # ------------------------------------------------------------------ #
+    if input_mode == "auto":
+        if p.is_dir():
+            effective = "synthetic"
+        else:
+            effective = "syslog"
+    else:
+        effective = input_mode  # "syslog" or "synthetic"
+
+    # ------------------------------------------------------------------ #
+    # Dispatch
+    # ------------------------------------------------------------------ #
+    if effective == "synthetic":
         logger.info(f"Parsing synthetic dataset directory: {log_file}")
         from parsing.synthetic_dataset_loader import run as load_synthetic
         df = load_synthetic(log_file, output_path=SESSIONIZED_PATH)
-    elif p.exists():
-        logger.info(f"Parsing raw log file: {log_file}")
-        from parsing.sessionizer import run as sessionize
-        df = sessionize(log_file, output_path=SESSIONIZED_PATH)
-    else:
-        logger.warning(
-            f"Log file not found: {log_file}. "
-            "Generating synthetic data via real parsing pipeline."
-        )
-        from scripts.generate_real_logs import generate_dataset
-        from common.utils import save_parquet
 
-        # generate_dataset() runs the real parser and returns the canonical DataFrame.
-        # Re-save under the pipeline's path in case config paths differ.
-        df = generate_dataset()
-        Path(SESSIONIZED_PATH).parent.mkdir(parents=True, exist_ok=True)
-        save_parquet(df, SESSIONIZED_PATH)
+    elif effective == "syslog":
+        if p.is_dir():
+            logger.info(f"Parsing syslog directory (run_directory): {log_file}")
+            from parsing.sessionizer import run_directory
+            df = run_directory(log_file, output_path=SESSIONIZED_PATH)
+        elif p.exists():
+            logger.info(f"Parsing raw log file: {log_file}")
+            from parsing.sessionizer import run as sessionize
+            df = sessionize(log_file, output_path=SESSIONIZED_PATH)
+        else:
+            logger.warning(
+                f"Log file not found: {log_file}. "
+                "Generating synthetic data via real parsing pipeline."
+            )
+            from scripts.generate_real_logs import generate_dataset
+            from common.utils import save_parquet
+
+            df = generate_dataset()
+            Path(SESSIONIZED_PATH).parent.mkdir(parents=True, exist_ok=True)
+            save_parquet(df, SESSIONIZED_PATH)
+
+    else:
+        raise ValueError(f"Unknown input_mode: {input_mode!r}. Use 'auto', 'syslog', or 'synthetic'.")
 
     return len(df)
 
@@ -135,8 +165,6 @@ def _step_correlation() -> int:
     import os
     import common.config as cfg
 
-    # Delete cached graph so build_graph() always runs fresh against the
-    # current sessionized_logs.parquet.  This is safe and fast (< 1s typical).
     graph_cache = cfg.GRAPH_PICKLE_PATH
     if os.path.exists(graph_cache):
         os.remove(graph_cache)
@@ -164,26 +192,14 @@ def _step_scoring() -> int:
 
 
 def _step_cross_run(dry_run: bool) -> int:
-    """Run the cross-run incident correlation step (P5.5).
-
-    Reads scored_logs_df.parquet and incident_history.parquet (if it exists),
-    matches incidents via Jaccard fingerprint similarity, assigns chain IDs,
-    elevates precursor scores, and writes enriched parquets.
-
-    In dry-run mode the incident history is parquet-only (no Postgres I/O).
-    """
+    """Run the cross-run incident correlation step (P5.5)."""
     from correlation.cross_run import run as cross_run
     scored_df, _ = cross_run(dry_run=dry_run)
     return len(scored_df)
 
 
 def _step_evaluate() -> int:
-    """Evaluate pipeline output against the Section-7 oracle (P5.9).
-
-    Runs only when scenario_labels.parquet exists (i.e. the section-aware
-    synthetic-dataset loader produced ground truth). Non-fatal by design:
-    an evaluation failure must never block the storage step.
-    """
+    """Evaluate pipeline output against the Section-7 oracle (P5.9)."""
     if not Path(cfg.SCENARIO_LABELS_PATH).exists():
         logger.info(
             "No scenario labels at %s — skipping oracle evaluation.",
@@ -239,7 +255,6 @@ def _step_storage(dry_run: bool) -> int:
             scored_df = pd.read_parquet(SCORED_LOGS_PATH)
             counts["scores"] = write_scores(scored_df, conn)
 
-            # Populate incident rows used by the dashboard feed/detail pages.
             if Path("data/processed/root_causes_df.parquet").exists():
                 from common.utils import worst_label
 
@@ -271,6 +286,7 @@ def _step_storage(dry_run: bool) -> int:
                     how="left",
                 )
                 incidents_df = incidents_df.rename(columns={"confidence_score": "root_cause_confidence"})
+
                 def _normalize_root_cause_log_id(value):
                     if pd.isna(value):
                         return None
@@ -293,10 +309,8 @@ def _step_storage(dry_run: bool) -> int:
                 )
 
                 _scored_df = _pd.read_parquet(SCORED_LOGS_PATH)
-
                 _rc_df = _pd.DataFrame()
                 _rc_path = "data/processed/root_causes_df.parquet"
-
                 if _Path(_rc_path).exists():
                     _rc_df = _pd.read_parquet(_rc_path)
 
@@ -328,10 +342,11 @@ def _run_step(
     step: str,
     dry_run: bool,
     log_file: str,
+    input_mode: str = "auto",
 ) -> int:
     """Dispatch to the correct step function and return row count."""
     dispatch = {
-        "parsing":     lambda: _step_parsing(log_file),
+        "parsing":     lambda: _step_parsing(log_file, input_mode=input_mode),
         "features":    _step_features,
         "anomaly":     _step_anomaly,
         "correlation": _step_correlation,
@@ -347,14 +362,18 @@ def run_pipeline(
     dry_run: bool = False,
     from_step: Optional[str] = None,
     log_file: str = "data/raw/sample.log",
+    input_mode: str = "auto",
 ) -> None:
     """Run the full pipeline from from_step onwards.
 
     Args:
-        dry_run:   Skip the Postgres write step.
-        from_step: Name of the step to start from (skips earlier steps,
-                   reading their parquet outputs from disk instead).
-        log_file:  Path to the raw log file for the parsing step.
+        dry_run:    Skip the Postgres write step.
+        from_step:  Name of the step to start from (skips earlier steps,
+                    reading their parquet outputs from disk instead).
+        log_file:   Path to the raw log file (or directory) for the parsing step.
+        input_mode: "auto" | "syslog" | "synthetic".
+                    Controls how the parsing step interprets a directory input.
+                    "auto" preserves the original behaviour (back-compat default).
     """
     if from_step and from_step not in STEPS:
         logger.error(
@@ -367,6 +386,7 @@ def run_pipeline(
 
     mode_tag = "[DRY-RUN] " if dry_run else ""
     logger.info(f"{mode_tag}Pipeline starting — steps: {', '.join(active_steps)}")
+    logger.info(f"input_mode={input_mode!r}  log_file={log_file!r}")
 
     total_start = time.perf_counter()
 
@@ -376,7 +396,12 @@ def run_pipeline(
         logger.info(f"STEP: {step.upper()}")
 
         try:
-            row_count = _run_step(step, dry_run=dry_run, log_file=log_file)
+            row_count = _run_step(
+                step,
+                dry_run=dry_run,
+                log_file=log_file,
+                input_mode=input_mode,
+            )
             elapsed = time.perf_counter() - t0
             logger.info(
                 f"DONE: {step} — {row_count:,} rows — {elapsed:.2f}s"
@@ -457,9 +482,22 @@ if __name__ == "__main__":
         metavar="PATH",
         default="data/raw/sample.log",
         help=(
-            "Path to the raw syslog file for the parsing step. "
+            "Path to the raw syslog file (or directory) for the parsing step. "
             "If the file does not exist, synthetic data is generated. "
             "(default: data/raw/sample.log)"
+        ),
+    )
+    ap.add_argument(
+        "--input-mode",
+        metavar="MODE",
+        choices=["auto", "syslog", "synthetic"],
+        default="auto",
+        help=(
+            "How to interpret a directory passed to --log-file. "
+            "'auto' keeps the original behaviour (dir→synthetic, file→sessionizer). "
+            "'syslog' always uses the real syslog sessionizer (use for uploaded log dirs). "
+            "'synthetic' always uses the synthetic dataset loader. "
+            "(default: auto)"
         ),
     )
     args = ap.parse_args()
@@ -468,4 +506,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         from_step=args.from_step,
         log_file=args.log_file,
+        input_mode=args.input_mode,
     )

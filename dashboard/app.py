@@ -106,7 +106,8 @@ with status_col:
 
 st.markdown("<h2 style='margin-bottom: 0.8rem;'>Quick access</h2>", unsafe_allow_html=True)
 
-col1, col2, col3, col4 = st.columns(4, gap="medium")
+# ── 5-column layout: existing 4 cards + new Upload & Analyze card ─────────
+col1, col2, col3, col4, col5 = st.columns(5, gap="medium")
 
 with col1:
     st.markdown(
@@ -179,6 +180,25 @@ with col4:
     )
     if st.button("Open Search →", key="nav_search", use_container_width=True, type="primary"):
         st.switch_page("pages/log_search.py")
+
+with col5:
+    st.markdown(
+        """
+        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;
+                  border: 1px solid rgba(59,130,246,0.35); background: rgba(59,130,246,0.04);">
+          <div>
+            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">📤</div>
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Upload & Analyze</div>
+            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
+              Drag in .log files, trigger the full pipeline, watch live progress, and view a result summary.
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Upload Logs →", key="nav_upload", use_container_width=True, type="primary"):
+        st.switch_page("pages/upload_logs.py")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
 st.info("👈 Use the sidebar navigation or click any buttons above to explore.", icon="ℹ️")

@@ -372,7 +372,7 @@ ANOMALY_SCORE_THRESHOLD: float = 0.5
 
 # Multiplier for the dynamic threshold: threshold = mean(scores) + k × std(scores).
 # k=2.0 flags scores more than 2 standard deviations above the batch mean (~top 2.3%).
-ANOMALY_DYNAMIC_K: float = 2.0
+ANOMALY_DYNAMIC_K: float = 1.25
 
 # Anomaly-flag strategy:
 #   "absolute"  — flag combined_score > ANOMALY_SCORE_THRESHOLD. Scores are
@@ -434,7 +434,7 @@ LABEL_MEDIUM_MAX: float = 0.50
 # Anything above LABEL_MEDIUM_MAX → critical
 
 # DBSCAN clustering parameters (incident_clusterer.py)
-DBSCAN_EPS: float = 0.3
+DBSCAN_EPS: float = 0.08
 DBSCAN_MIN_SAMPLES: int = 5
 
 # Root cause candidates selected per incident cluster.
