@@ -2,7 +2,6 @@ python-dotenv
 sqlalchemy
 pandas
 psycopg2-binary
-elasticsearch>=8.11.0,<9
 pytest
 scikit-learn
 numpy
@@ -11,3 +10,8 @@ scipy
 pyarrow
 networkx>=3.2
 python-dateutil
+streamlit
+pyvis
+plotly
+elasticsearch
+google-generativeai
