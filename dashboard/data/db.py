@@ -17,13 +17,7 @@ from datetime import datetime, timedelta
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor, execute_values
 
-from common.config import (
-    DB_HOST,
-    DB_NAME,
-    DB_PASSWORD,
-    DB_PORT,
-    DB_USER,
-)
+from common.config import DB_URL
 from common.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,15 +32,7 @@ _POOL = None
 def _init_pool() -> pool.SimpleConnectionPool:
     global _POOL
     if _POOL is None:
-        _POOL = pool.SimpleConnectionPool(
-            1,
-            10,
-            host=DB_HOST,
-            port=int(DB_PORT),
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-        )
+        _POOL = pool.SimpleConnectionPool(1, 10, dsn=DB_URL)
     return _POOL
 
 
