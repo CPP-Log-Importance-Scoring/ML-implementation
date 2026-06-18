@@ -35,7 +35,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from ui import apply_theme  # noqa: E402  (must be after sys.path bootstrap)
+from ui import apply_theme, render_sidebar_nav  # noqa: E402  (must be after sys.path bootstrap)
 
 from dashboard.data import db
 
@@ -49,6 +49,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 apply_theme()
+render_sidebar_nav()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -181,33 +182,6 @@ def _init_state() -> None:
 
 
 _init_state()
-
-
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.markdown(
-        """
-        <div style='padding: 0.5rem 0 1rem 0;'>
-          <div style='font-size:1.15rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
-            ⚡ HPE CX Intelligence
-          </div>
-          <div style='font-size:0.7rem; color:#64748b; margin-top:2px;'>
-            Observability Platform
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.divider()
-    st.page_link("app.py",                   label="🏠 Home")
-    st.page_link("pages/incident_feed.py",   label="📋 Incident Feed")
-    st.page_link("pages/incident_detail.py", label="🔍 Incident Detail")
-    st.page_link("pages/host_health.py",     label="🖥️ Host Health")
-    st.page_link("pages/log_search.py",      label="🔎 Log Search")
-    st.page_link("pages/upload_logs.py",     label="📤 Upload & Analyze")
-    st.divider()
 
 
 # ---------------------------------------------------------------------------

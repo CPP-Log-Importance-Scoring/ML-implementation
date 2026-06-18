@@ -15,7 +15,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
 
 import streamlit as st
 from data import db
-from ui import apply_theme, render_time_window
+from ui import apply_theme, render_sidebar_nav, render_time_window
 from components.severity_badge import severity_badge
 
 st.set_page_config(
@@ -25,6 +25,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 apply_theme()
+render_sidebar_nav()
 
 with st.sidebar:
     st.markdown(

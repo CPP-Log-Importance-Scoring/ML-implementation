@@ -20,7 +20,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
 import streamlit as st
 import pandas as pd
 from data import db, es
-from ui import apply_theme, service_status_dot
+from ui import apply_theme, render_sidebar_nav, service_status_dot
 
 st.set_page_config(
     page_title="Log Search · HPE CX",
@@ -29,6 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 apply_theme()
+render_sidebar_nav()
 
 # ── Sidebar filters ────────────────────────────────────────────────────────
 with st.sidebar:

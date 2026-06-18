@@ -87,8 +87,10 @@ h3 {
 }
 
 /* Navigation links */
+/* Hide Streamlit's auto-generated page nav — every page renders the shared
+   branded emoji navbar via render_sidebar_nav() instead. */
 [data-testid="stSidebarNav"] {
-    background: transparent !important;
+    display: none !important;
 }
 
 [data-testid="stSidebarNav"] * {
@@ -342,6 +344,49 @@ hr {
 def apply_theme() -> None:
     """Inject the shared dashboard CSS theme."""
     st.markdown(THEME_CSS, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Sidebar navigation
+# ---------------------------------------------------------------------------
+
+# (page path, emoji label) — the single source of truth for the sidebar nav.
+_NAV_LINKS = [
+    ("app.py",                   "🏠 Home"),
+    ("pages/incident_feed.py",   "📋 Incident Feed"),
+    ("pages/incident_detail.py", "🔍 Incident Detail"),
+    ("pages/host_health.py",     "🖥️ Host Health"),
+    ("pages/log_search.py",      "🔎 Log Search"),
+    ("pages/upload_logs.py",     "📤 Upload & Analyze"),
+]
+
+
+def render_sidebar_nav() -> None:
+    """Render the shared branded sidebar navigation (emoji page links).
+
+    Replaces Streamlit's auto-generated page nav (hidden via THEME_CSS) with a
+    single branded navbar so every page shows identical, emoji-labelled links.
+    Call once per page, right after ``apply_theme()`` and before any
+    page-specific sidebar widgets.
+    """
+    with st.sidebar:
+        st.markdown(
+            """
+            <div style='padding: 0.5rem 0 1rem 0;'>
+              <div style='font-size:1.15rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
+                ⚡ HPE CX Intelligence
+              </div>
+              <div style='font-size:0.7rem; color:#64748b; margin-top:2px; font-family:"IBM Plex Mono",monospace;'>
+                Observability Platform
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.divider()
+        for path, label in _NAV_LINKS:
+            st.page_link(path, label=label)
+        st.divider()
 
 
 # ---------------------------------------------------------------------------
