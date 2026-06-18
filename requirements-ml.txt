@@ -1,0 +1,7 @@
+# Pipeline / ML container deps (parsing, features, anomaly, correlation, scoring).
+# Installed by the hpe_pipeline service. Does NOT pull streamlit/plotly/pyvis/gemini.
+-r requirements-base.txt
+scikit-learn==1.8.0
+scipy==1.17.1               # transitive of scikit-learn; pinned for reproducibility
+joblib==1.5.3               # model (de)serialization in ml/trainer.py
+networkx==3.6.1             # correlation graph (correlation/)
