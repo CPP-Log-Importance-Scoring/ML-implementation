@@ -201,6 +201,25 @@ def _step_evaluate() -> int:
         return 0
 
 
+def _compute_run_id() -> str:
+    """Batch run id = YYYYMMDD of the earliest event in this run.
+
+    Deterministic from the data (idempotent on re-run) and distinct across
+    non-overlapping batches, matching correlation/cross_run.py's run_date_str.
+    """
+    import pandas as pd
+    from datetime import datetime, timezone
+
+    try:
+        df = pd.read_parquet(cfg.SESSIONIZED_LOGS_PATH, columns=["timestamp"])
+        ts = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
+        if len(ts):
+            return ts.min().strftime("%Y%m%d")
+    except Exception:
+        pass
+    return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
 def _step_storage(dry_run: bool) -> int:
     """Write all parquets to Postgres (skipped in dry-run mode)."""
     if dry_run:
@@ -224,21 +243,42 @@ def _step_storage(dry_run: bool) -> int:
 
         counts = {}
 
+        # Run identifier (YYYYMMDD of the batch's earliest event) — stamped on
+        # every per-batch table so (run_id, sequence_number) is globally unique
+        # and successive upload batches ACCUMULATE instead of overwriting.
+        run_id = _compute_run_id()
+        logger.info("Storage run_id=%s", run_id)
+
+        def _globalize_id(cid):
+            """Local INC-NNNN -> globally-unique INC-<run_id>-NNNN."""
+            if pd.isna(cid):
+                return cid
+            return f"INC-{run_id}-{str(cid).replace('INC-', '')}"
+
         if Path(cfg.SESSIONIZED_LOGS_PATH).exists():
             logs_df = pd.read_parquet(cfg.SESSIONIZED_LOGS_PATH)
+            logs_df["run_id"] = run_id
             counts["logs"] = write_logs(logs_df, conn)
 
         if Path(cfg.FEATURES_OUTPUT_PATH).exists():
             feat_df = pd.read_parquet(cfg.FEATURES_OUTPUT_PATH)
+            feat_df["run_id"] = run_id
             counts["features"] = write_features(feat_df, conn)
 
         if Path(cfg.ANOMALY_PATH).exists():
             anom_df = pd.read_parquet(cfg.ANOMALY_PATH)
+            anom_df["run_id"] = run_id
             counts["anomalies"] = write_anomalies(anom_df, conn)
 
         if Path(cfg.SCORED_LOGS_PATH).exists():
             scored_df = pd.read_parquet(cfg.SCORED_LOGS_PATH)
-            counts["scores"] = write_scores(scored_df, conn)
+            scored_df["run_id"] = run_id
+            # Write scores with a globalized correlation_id so it matches
+            # incidents.incident_id; keep the local scored_df for the incident
+            # aggregation below (root-cause merge still joins on local ids).
+            scored_write = scored_df.copy()
+            scored_write["correlation_id"] = scored_write["correlation_id"].map(_globalize_id)
+            counts["scores"] = write_scores(scored_write, conn)
 
             if Path("data/processed/root_causes_df.parquet").exists():
                 from common.utils import worst_label
@@ -283,6 +323,11 @@ def _step_storage(dry_run: bool) -> int:
                     return f"log_{int(value):06d}"
 
                 incidents_df["root_cause_log_id"] = incidents_df["root_cause_log_id"].apply(_normalize_root_cause_log_id)
+                # Globalize the incident id (was the local INC-NNNN from the
+                # correlation_id groupby) so incidents accumulate across batches
+                # and match scores.correlation_id written above.
+                incidents_df["run_id"] = run_id
+                incidents_df["incident_id"] = incidents_df["correlation_id"].map(_globalize_id)
                 counts["incidents"] = write_incidents(incidents_df, conn)
 
         if not dry_run and Path(cfg.SCORED_LOGS_PATH).exists():

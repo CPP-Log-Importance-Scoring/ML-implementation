@@ -136,7 +136,7 @@ def get_incidents(
         "  EXTRACT(EPOCH FROM (i.end_time - i.start_time))::int AS duration",
         "FROM incidents i",
         "JOIN scores s ON s.correlation_id = i.incident_id",
-        "JOIN logs l ON l.sequence_number = s.sequence_number",
+        "JOIN logs l ON l.sequence_number = s.sequence_number AND l.run_id = s.run_id",
         "WHERE i.start_time >= %s",
         "  AND i.start_time <= %s",
     ]
@@ -146,7 +146,7 @@ def get_incidents(
         query_parts.append("""  AND i.incident_id IN (
             SELECT DISTINCT s2.correlation_id
             FROM scores s2
-            JOIN logs l2 ON l2.sequence_number = s2.sequence_number
+            JOIN logs l2 ON l2.sequence_number = s2.sequence_number AND l2.run_id = s2.run_id
             WHERE l2.host = %s
         )""")
         params.append(host)
@@ -198,8 +198,8 @@ def get_incident_logs(correlation_id: str) -> pd.DataFrame:
             FALSE AS feature_in_sequence,
             NULL AS feature_payload
         FROM logs l
-        JOIN scores s ON s.sequence_number = l.sequence_number
-        LEFT JOIN features f ON f.sequence_number = l.sequence_number
+        JOIN scores s ON s.sequence_number = l.sequence_number AND s.run_id = l.run_id
+        LEFT JOIN features f ON f.sequence_number = l.sequence_number AND f.run_id = l.run_id
         WHERE s.correlation_id = %s
         ORDER BY l.timestamp ASC
     """
@@ -219,7 +219,7 @@ def get_root_causes(correlation_id: str) -> pd.DataFrame:
             l.message,
             l.host
         FROM scores s
-        JOIN logs l ON l.sequence_number = s.sequence_number
+        JOIN logs l ON l.sequence_number = s.sequence_number AND l.run_id = s.run_id
         WHERE s.correlation_id = %s
           AND s.is_root_cause = TRUE
         ORDER BY s.root_cause_confidence DESC, s.final_score DESC
@@ -248,8 +248,8 @@ def get_host_stats(
             END AS anomaly_rate,
             MAX(l.timestamp) AS last_incident_at
         FROM logs l
-        LEFT JOIN scores s ON s.sequence_number = l.sequence_number
-        LEFT JOIN anomalies a ON a.sequence_number = l.sequence_number
+        LEFT JOIN scores s ON s.sequence_number = l.sequence_number AND s.run_id = l.run_id
+        LEFT JOIN anomalies a ON a.sequence_number = l.sequence_number AND a.run_id = l.run_id
         WHERE l.timestamp >= %s
           AND l.timestamp <= %s
         GROUP BY l.host
@@ -294,7 +294,7 @@ def get_incident_count_by_hour(
             COUNT(DISTINCT s.correlation_id) AS incident_count,
             SUM(CASE WHEN s.label = 'critical' THEN 1 ELSE 0 END) AS critical_count
         FROM logs l
-        JOIN scores s ON s.sequence_number = l.sequence_number
+        JOIN scores s ON s.sequence_number = l.sequence_number AND s.run_id = l.run_id
         WHERE l.timestamp >= %s AND l.timestamp <= %s
           AND s.correlation_id IS NOT NULL
         GROUP BY DATE_TRUNC('hour', l.timestamp)
