@@ -237,6 +237,13 @@ hr {
     border-radius: 10px !important;
     background: #fafafa;
 }
+/* Header label was inheriting white-on-white; force a readable dark tone. */
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] details > summary * {
+    color: #0f172a !important;
+}
 
 /* ── Spinner ──────────────────────────────── */
 [data-testid="stSpinner"] {
