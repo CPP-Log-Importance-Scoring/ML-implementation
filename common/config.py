@@ -465,6 +465,14 @@ ONSET_SCORE_FLOOR: float = 0.45
 DBSCAN_EPS: float = 0.08
 DBSCAN_MIN_SAMPLES: int = 5
 
+# Max time gap within a single incident. DBSCAN clusters on feature similarity
+# only, so temporally-distant but similar logs (routine medium lines spread
+# across a multi-day batch) collapse into one mega-incident spanning days. After
+# clustering we split each incident wherever consecutive logs are more than this
+# many seconds apart, then drop fragments smaller than DBSCAN_MIN_SAMPLES back to
+# noise — so incidents are bounded activity bursts, not 10-day blobs.
+INCIDENT_MAX_GAP_SECONDS: int = 900  # 15 minutes
+
 # Root cause candidates selected per incident cluster.
 ROOT_CAUSE_TOP_N: int = 3
 

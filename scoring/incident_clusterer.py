@@ -32,6 +32,53 @@ logger = get_logger(__name__)
 _SCORED_PATH = "data/processed/scored_logs_df.parquet"
 
 
+def _split_clusters_on_time_gap(df: pd.DataFrame) -> pd.DataFrame:
+    """Split each DBSCAN incident wherever consecutive logs are more than
+    cfg.INCIDENT_MAX_GAP_SECONDS apart, then drop resulting fragments smaller
+    than DBSCAN_MIN_SAMPLES back to noise (correlation_id=None). Surviving
+    segments are renumbered to clean INC-NNNN ids in chronological order.
+
+    No-op if there is no timestamp column or no clustered rows.
+    """
+    if "timestamp" not in df.columns:
+        return df
+
+    mask = df["correlation_id"].notna()
+    if not mask.any():
+        return df
+
+    work = df.loc[mask, ["correlation_id", "timestamp"]].copy()
+    work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
+    work = work.sort_values(["correlation_id", "timestamp"])
+
+    # Segment index within each original incident: bump it at every gap.
+    gap = work.groupby("correlation_id")["timestamp"].diff().dt.total_seconds()
+    boundary = gap > float(cfg.INCIDENT_MAX_GAP_SECONDS)
+    seg = boundary.groupby(work["correlation_id"]).cumsum().astype(int)
+    composite = work["correlation_id"].astype(str) + "#" + seg.astype(str)
+
+    # Drop segments below the density floor back to noise.
+    sizes = composite.map(composite.value_counts())
+    composite = composite.where(sizes >= cfg.DBSCAN_MIN_SAMPLES, other=np.nan)
+
+    # Renumber surviving segments by first-event time so ids are chronological.
+    valid = composite.dropna()
+    if len(valid):
+        firsts = (
+            work.loc[valid.index]
+            .assign(_c=valid)
+            .groupby("_c")["timestamp"].min()
+            .sort_values()
+        )
+        id_map = {c: f"INC-{i:04d}" for i, c in enumerate(firsts.index)}
+        new_ids = composite.map(lambda c: id_map.get(c) if pd.notna(c) else None)
+    else:
+        new_ids = composite  # all NaN
+
+    df.loc[work.index, "correlation_id"] = new_ids.values
+    return df
+
+
 def cluster_incidents(scored_df: pd.DataFrame) -> pd.DataFrame:
     """Group non-ignore logs into incidents via DBSCAN.
 
@@ -80,6 +127,10 @@ def cluster_incidents(scored_df: pd.DataFrame) -> pd.DataFrame:
         index=df.index[non_ignore_mask],
     )
     df.loc[non_ignore_mask, "correlation_id"] = corr_id_values
+
+    # Phase 2.5 — split clusters that span large time gaps so a single incident
+    # can't stretch across days (DBSCAN groups on feature similarity only).
+    df = _split_clusters_on_time_gap(df)
 
     n_incidents = len(df["correlation_id"].dropna().unique())
     n_noise = int((raw_labels == -1).sum())
