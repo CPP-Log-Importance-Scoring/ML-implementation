@@ -1,8 +1,9 @@
-# Dashboard container deps (Streamlit UI). Installed by the hpe_dashboard service.
-# Deliberately excludes scikit-learn/scipy/joblib — the dashboard reads parquet +
-# Postgres and never trains/loads models, so those heavy ML wheels are not needed.
-# (networkx is pulled transitively by pyvis for graph rendering.)
--r requirements-base.txt
+# Dashboard container deps. Installed by the hpe_dashboard service.
+# NOTE: the Upload & Analyze page launches pipeline.py as a subprocess INSIDE
+# this container, so the dashboard needs the full ML stack (scikit-learn, scipy,
+# joblib, networkx) on top of the UI libs — hence it pulls in requirements-ml.txt.
+# Only the lean hpe_pipeline service can skip the UI libs below.
+-r requirements-ml.txt
 streamlit==1.58.0
 plotly==6.8.0              # charts (timeline / host health)
 pyvis==0.3.2              # correlation graph rendering (dashboard.components.graph_view)

@@ -1,8 +1,8 @@
 # Full local-dev environment = everything (pipeline + dashboard + tests).
 # Containers install the narrower per-service files instead:
-#   - hpe_pipeline  -> requirements-ml.txt
-#   - hpe_dashboard -> requirements-dashboard.txt
+#   - hpe_pipeline  -> requirements-ml.txt        (lean: ML stack, no UI)
+#   - hpe_dashboard -> requirements-dashboard.txt (ML stack + UI; runs pipeline.py)
 # Shared runtime deps live in requirements-base.txt.
--r requirements-ml.txt
+# requirements-dashboard.txt already pulls in requirements-ml.txt (+ base).
 -r requirements-dashboard.txt
 pytest==9.0.3              # test-only; not needed by either runtime container
