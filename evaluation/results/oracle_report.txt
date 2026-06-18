@@ -1,32 +1,34 @@
 ORACLE EVALUATION REPORT
 truth = log_level in ['CRITICAL', 'HIGH', 'ERROR'] (severity is excluded from IF features; final_score ranking metrics are partially favoured by the severity term)
 
-total_logs: 114
-truth_signal_count: 13
-truth_signal_rate: 0.1140
+total_logs: 6023
+truth_signal_count: 12
+truth_signal_rate: 0.0020
 unscored_rows: 0
-anomaly_flagged_count: 27
-anomaly_flagged_rate: 0.2368
-anomaly_tp: 0
-anomaly_fp: 27
-anomaly_fn: 13
-anomaly_precision: 0.0000
-anomaly_recall: 0.0000
-anomaly_f1: 0.0000
-ranking_recall_at_k: 0.7692
+anomaly_flagged_count: 211
+anomaly_flagged_rate: 0.0350
+anomaly_tp: 9
+anomaly_fp: 202
+anomaly_fn: 3
+anomaly_precision: 0.0427
+anomaly_recall: 0.7500
+anomaly_f1: 0.0807
+ranking_recall_at_k: 0.7500
 ranking_recall_at_k_ml: 0.0000
-mean_final_score_signal: 0.5553
-mean_final_score_noise: 0.2598
-score_separation: 0.2955
+mean_final_score_signal: 0.5022
+mean_final_score_noise: 0.1014
+score_separation: 0.4008
 critical_capture_rate: 1.0000
-noise_suppression_ratio: 0.4752
-signal_incident_coverage: 0.0000
-scenario_detection_rate: 0.0000
-scenarios_detected: 0
-scenarios_total: 3
+noise_suppression_ratio: 0.9541
+signal_incident_coverage: 0.5833
+scenario_detection_rate: 0.5000
+scenarios_detected: 1
+scenarios_total: 5
 
 Per-scenario breakdown:
-                  scenario_id          training_label  n_logs  n_signal  n_signal_flagged  signal_recall  detected
-scenario_04_buffer_congestion     HIGH_BUFFER_FAILURE      38         4                 0            0.0     False
- scenario_05_interface_errors MEDIUM_PHYSICAL_FAILURE      38         3                 0            0.0     False
-     scenario_06_routing_flap    HIGH_ROUTING_FAILURE      38         6                 0            0.0     False
+scenario_id          training_label  n_logs  n_signal  n_signal_flagged  signal_recall  detected
+ 2026-06-13                  NORMAL    1201         0                 0            0.0     False
+ 2026-06-14                  NORMAL    1201         0                 0            0.0     False
+ 2026-06-15     HIGH_DAEMON_FAILURE    1203         2                 0            0.0     False
+ 2026-06-16 CRITICAL_ROUTE_OVERFLOW    1217        10                 9            0.9      True
+ 2026-06-17                  NORMAL    1201         0                 0            0.0     False
