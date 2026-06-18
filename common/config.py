@@ -421,6 +421,38 @@ LABEL_LOW_MAX: float = 0.30
 LABEL_MEDIUM_MAX: float = 0.50
 # Anything above LABEL_MEDIUM_MAX → critical
 
+# ---------------------------------------------------------------------------
+# Message-aware score adjustments (scoring/importance_scorer.py)
+# ---------------------------------------------------------------------------
+# The synthetic dataset tags severity inconsistently: recovery / routine
+# all-clear lines often inherit an incident block's HIGH/CRITICAL log_level
+# (inflating the severity term), while the real onset markers
+# ("<SCENARIO> event in progress - monitoring") are sometimes tagged INFO.
+# These two message-text rules correct the ranking at the scoring layer without
+# retraining the model.
+#
+# NOTE: the patterns below are tuned to THIS synthetic dataset's wording. On
+# real HPE logs, replace them with the actual recovery/onset vocabulary — the
+# mechanism generalizes, the specific word list does not.
+
+# (1) Damp recovery / all-clear lines so they fall out of the high tiers.
+RECOVERY_SCORE_DAMPING: float = 0.45
+RECOVERY_MESSAGE_PATTERNS: list = [
+    r"\bresolved\b", r"\brestored\b", r"\brecovered\b", r"\bcleared\b",
+    r"\bmitigat", r"restart complete", r"back to normal",
+    r"\bhealthy\b", r"\bstable\b", r"\bnominal\b", r"\boperational\b",
+    r"within acceptable", r"no unresolved", r"no violations",
+    r"no unauthorized", r"audit passed", r"check passed",
+    r"telemetry exported", r"statistics collection", r"performance report",
+]
+
+# (2) Floor genuine onset markers so they stay visible even when mis-tagged
+#     INFO. CRITICAL-level onsets already score higher; this only lifts
+#     under-scored ones into the medium tier (0.30–0.50). Recovery and onset
+#     sets are disjoint — recovery phrases never contain "event in progress".
+ONSET_MARKER_PATTERN: str = r"event in progress"
+ONSET_SCORE_FLOOR: float = 0.45
+
 # DBSCAN clustering parameters (incident_clusterer.py)
 DBSCAN_EPS: float = 0.08
 DBSCAN_MIN_SAMPLES: int = 5

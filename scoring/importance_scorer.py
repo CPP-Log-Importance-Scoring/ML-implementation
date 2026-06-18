@@ -188,6 +188,51 @@ def score(
     return df
 
 
+def apply_message_adjustments(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply message-text corrections to final_score before labeling.
+
+    Two rules (see common/config.py RECOVERY_* / ONSET_*):
+      1. Damp recovery / routine all-clear lines (e.g. "OOM event resolved",
+         "Failover capability restored") so they stop outranking the real
+         onset markers and stop crossing into "critical".
+      2. Floor genuine onset markers ("<SCENARIO> event in progress -
+         monitoring") so they remain visible even when the dataset mis-tags
+         them INFO (their severity term would otherwise bury them).
+
+    Requires a "message" column; returns the df unchanged (no-op) if absent so
+    legacy callers without message text keep working.
+    """
+    if "message" not in df.columns:
+        logger.warning("apply_message_adjustments: no 'message' column — skipping")
+        return df
+
+    msg = df["message"].fillna("").astype(str)
+
+    # (1) recovery / all-clear damping
+    recovery = pd.Series(False, index=df.index)
+    for pat in cfg.RECOVERY_MESSAGE_PATTERNS:
+        recovery |= msg.str.contains(pat, case=False, regex=True, na=False)
+    df.loc[recovery, "final_score"] = (
+        df.loc[recovery, "final_score"] * cfg.RECOVERY_SCORE_DAMPING
+    )
+
+    # (2) onset-marker floor (disjoint from the recovery set)
+    onset = msg.str.contains(
+        cfg.ONSET_MARKER_PATTERN, case=False, regex=True, na=False
+    )
+    df.loc[onset, "final_score"] = df.loc[onset, "final_score"].clip(
+        lower=cfg.ONSET_SCORE_FLOOR
+    )
+
+    df["final_score"] = df["final_score"].clip(0.0, 1.0)
+    logger.info(
+        "Message adjustments: damped %d recovery/all-clear lines, "
+        "floored %d onset markers",
+        int(recovery.sum()), int(onset.sum()),
+    )
+    return df
+
+
 def run(
     features_path: str = "data/processed/features_df.parquet",
     anomaly_path: str = "data/processed/anomaly_df.parquet",
