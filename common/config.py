@@ -444,6 +444,14 @@ RECOVERY_MESSAGE_PATTERNS: list = [
     r"within acceptable", r"no unresolved", r"no violations",
     r"no unauthorized", r"audit passed", r"check passed",
     r"telemetry exported", r"statistics collection", r"performance report",
+    # Residual benign-status phrases confirmed across the May/June batches.
+    # Kept specific so they don't catch recovery-flavoured *true* detections
+    # such as "ARP rate returning to normal" or "MAC table ... reduced after
+    # aging" (those carry HIGH severity and correctly flag the incident window).
+    r"sync state synced", r"peer reachable", r"convergence complete",
+    r"no blackholes", r"no recurrence", r"no issues found",
+    r"within normal bounds", r"established, 0 down", r"operationally up",
+    r"maintenance check",
 ]
 
 # (2) Floor genuine onset markers so they stay visible even when mis-tagged
