@@ -55,7 +55,7 @@ services:
     volumes:
       - .:/app
     command: >
-      sh -c "pip install --default-timeout=100 -r requirements.txt -q &&
+      sh -c "pip install --default-timeout=100 -r requirements-ml.txt -q &&
              python pipeline.py --log-file data/raw/real_logs_2day.log"
     environment:
       - DB_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -78,7 +78,7 @@ services:
     volumes:
       - .:/app
     command: >
-      sh -c "pip install --default-timeout=100 -r requirements.txt -r dashboard/requirements.txt -q &&
+      sh -c "pip install --default-timeout=100 -r requirements-dashboard.txt -q &&
              streamlit run dashboard/app.py
              --server.port 8501 --server.address 0.0.0.0"
     ports:

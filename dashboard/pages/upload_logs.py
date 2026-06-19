@@ -35,7 +35,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from ui import apply_theme  # noqa: E402  (must be after sys.path bootstrap)
+from ui import apply_theme, render_sidebar_nav  # noqa: E402  (must be after sys.path bootstrap)
 
 from dashboard.data import db
 
@@ -49,12 +49,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 apply_theme()
+render_sidebar_nav()
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-UPLOADS_ROOT   = Path("data/raw/uploads")
-SCORED_PARQUET = Path("data/processed/scored_logs_df.parquet")
+UPLOADS_ROOT       = Path("data/raw/uploads")
+SCORED_PARQUET     = Path("data/processed/scored_logs_df.parquet")
+# Human-readable log content (message/host/timestamp/event) lives here; the
+# scored parquet is scores-only, keyed by sequence_number. We join the two so
+# the result view can show *what actually happened*, not just counts.
+SESSIONIZED_PARQUET = Path("data/processed/sessionized_logs.parquet")
 
 # Label severity order (worst-first) for sorting / display
 LABEL_ORDER = ["critical", "medium", "low", "ignore"]
@@ -177,33 +182,6 @@ def _init_state() -> None:
 
 
 _init_state()
-
-
-# ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.markdown(
-        """
-        <div style='padding: 0.5rem 0 1rem 0;'>
-          <div style='font-size:1.15rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
-            ⚡ HPE CX Intelligence
-          </div>
-          <div style='font-size:0.7rem; color:#64748b; margin-top:2px;'>
-            Observability Platform
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.divider()
-    st.page_link("app.py",                   label="🏠 Home")
-    st.page_link("pages/incident_feed.py",   label="📋 Incident Feed")
-    st.page_link("pages/incident_detail.py", label="🔍 Incident Detail")
-    st.page_link("pages/host_health.py",     label="🖥️ Host Health")
-    st.page_link("pages/log_search.py",      label="🔎 Log Search")
-    st.page_link("pages/upload_logs.py",     label="📤 Upload & Analyze")
-    st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +364,25 @@ if st.session_state.job_status in ("success", "failed"):
                 f"`{SCORED_PARQUET}`. Check the log for details."
             )
         else:
+            # ── Attach human-readable log fields ─────────────────────────
+            # scored_logs_df is scores-only; join the sessionized logs (which
+            # carry message/host/timestamp/event_type) on sequence_number so
+            # the operator can read the actual flagged log lines.
+            logs_df = _load_results(SESSIONIZED_PARQUET)
+            if (
+                logs_df is not None
+                and "sequence_number" in df.columns
+                and "sequence_number" in logs_df.columns
+            ):
+                join_cols = [
+                    c for c in
+                    ["sequence_number", "timestamp", "host", "service",
+                     "log_level", "event_type", "event_action", "message",
+                     "source_file"]
+                    if c in logs_df.columns
+                ]
+                df = df.merge(logs_df[join_cols], on="sequence_number", how="left")
+
             st.markdown("---")
             st.subheader("📊 Result Summary")
 
@@ -424,34 +421,69 @@ if st.session_state.job_status in ("success", "failed"):
                         unsafe_allow_html=True,
                     )
 
-            # ── Top incidents ────────────────────────────────────────────
-            if "combined_score" in df.columns:
-                st.markdown("#### Top 10 Incidents by Combined Score")
+            # ── Critical & medium logs — what actually happened ──────────
+            score_col = next(
+                (c for c in ("final_score", "combined_score") if c in df.columns),
+                None,
+            )
 
-                display_cols = [
-                    c for c in
-                    ["timestamp", "host", "label", "combined_score", "correlation_id"]
-                    if c in df.columns
-                ]
+            if label_col_exists:
+                flagged = df[df["label"].isin(["critical", "medium"])].copy()
+                if score_col:
+                    flagged = flagged.sort_values(score_col, ascending=False)
+                flagged = flagged.reset_index(drop=True)
 
-                top_df = (
-                    df.sort_values("combined_score", ascending=False)
-                    .head(10)[display_cols]
-                    .reset_index(drop=True)
-                )
+                st.markdown("#### 🚨 Critical & Medium Logs")
 
-                # Colour-code the label column
-                def _style_label(val: str) -> str:
-                    color = LABEL_COLORS.get(str(val).lower(), "#475569")
-                    return f"color: {color}; font-weight: 600;"
+                if flagged.empty:
+                    st.info("No critical or medium-severity logs were flagged in this batch.")
+                else:
+                    # Colour-code the label column
+                    def _style_label(val: str) -> str:
+                        color = LABEL_COLORS.get(str(val).lower(), "#475569")
+                        return f"color: {color}; font-weight: 600;"
 
-                styled = top_df.style
-                if "label" in top_df.columns:
-                    styled = styled.applymap(_style_label, subset=["label"])
-                if "combined_score" in top_df.columns:
-                    styled = styled.format({"combined_score": "{:.4f}"})
+                    display_cols = [
+                        c for c in
+                        ["timestamp", "host", "log_level", "event_type",
+                         "label", score_col, "message", "correlation_id"]
+                        if c and c in flagged.columns
+                    ]
 
-                st.dataframe(styled, use_container_width=True)
+                    table_df = flagged[display_cols]
+                    styled = table_df.style
+                    if "label" in display_cols:
+                        # pandas >=2.1 renamed Styler.applymap -> Styler.map
+                        _elementwise = getattr(styled, "map", None) or styled.applymap
+                        styled = _elementwise(_style_label, subset=["label"])
+                    if score_col and score_col in display_cols:
+                        styled = styled.format({score_col: "{:.4f}"})
+
+                    st.dataframe(styled, use_container_width=True, hide_index=True)
+                    st.caption(
+                        f"Showing all {len(flagged):,} flagged log line(s). "
+                        "Use Incident Feed / Log Search for full triage."
+                    )
+
+                    # Detailed drill-down for the top critical lines
+                    crit = flagged[flagged["label"] == "critical"]
+                    if not crit.empty and "message" in crit.columns:
+                        st.markdown("##### Critical line details")
+                        for _, row in crit.head(10).iterrows():
+                            host = row.get("host", "—")
+                            ts   = row.get("timestamp", "—")
+                            etype = row.get("event_type", "")
+                            header = f"🔴 {ts}  ·  {host}" + (f"  ·  {etype}" if etype else "")
+                            with st.expander(header):
+                                st.write(row.get("message", "(no message)"))
+                                meta = {
+                                    k: row[k] for k in
+                                    ("service", "log_level", "event_action",
+                                     score_col, "correlation_id", "source_file")
+                                    if k and k in row.index and pd.notna(row[k])
+                                }
+                                if meta:
+                                    st.json(meta, expanded=False)
 
     # ── Restart button ───────────────────────────────────────────────────────
     st.markdown("---")

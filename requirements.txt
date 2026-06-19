@@ -1,17 +1,8 @@
-python-dotenv
-sqlalchemy
-pandas
-psycopg2-binary
-pytest
-scikit-learn
-numpy
-joblib
-scipy
-pyarrow
-networkx>=3.2
-python-dateutil
-streamlit
-pyvis
-plotly
-elasticsearch
-google-generativeai
+# Full local-dev environment = everything (pipeline + dashboard + tests).
+# Containers install the narrower per-service files instead:
+#   - hpe_pipeline  -> requirements-ml.txt        (lean: ML stack, no UI)
+#   - hpe_dashboard -> requirements-dashboard.txt (ML stack + UI; runs pipeline.py)
+# Shared runtime deps live in requirements-base.txt.
+# requirements-dashboard.txt already pulls in requirements-ml.txt (+ base).
+-r requirements-dashboard.txt
+pytest==9.0.3              # test-only; not needed by either runtime container

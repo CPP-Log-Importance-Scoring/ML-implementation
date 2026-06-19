@@ -1,8 +1,15 @@
 -- =========================
 -- LOGS TABLE
 -- =========================
+-- run_id (format YYYYMMDD, the batch's earliest event date) makes the
+-- per-batch sequence_number globally unique so successive upload batches
+-- ACCUMULATE instead of overwriting each other on (sequence_number) collision.
+-- NOTE: the composite-key change only applies to a FRESH database — reset with
+-- `docker compose down -v` before relying on it.
 CREATE TABLE IF NOT EXISTS logs (
-    sequence_number BIGINT PRIMARY KEY,
+    run_id VARCHAR(20) NOT NULL DEFAULT 'legacy',
+    sequence_number BIGINT,
+    PRIMARY KEY (run_id, sequence_number),
     timestamp TIMESTAMPTZ,
     source_type VARCHAR(100),
     service VARCHAR(100),
@@ -42,7 +49,11 @@ ALTER TABLE logs ADD COLUMN IF NOT EXISTS severity_explicit BOOLEAN;
 -- FEATURES TABLE
 -- =========================
 CREATE TABLE IF NOT EXISTS features (
-    sequence_number BIGINT PRIMARY KEY REFERENCES logs(sequence_number) ON DELETE CASCADE,
+    run_id VARCHAR(20) NOT NULL DEFAULT 'legacy',
+    sequence_number BIGINT,
+    PRIMARY KEY (run_id, sequence_number),
+    FOREIGN KEY (run_id, sequence_number)
+        REFERENCES logs(run_id, sequence_number) ON DELETE CASCADE,
     session_id TEXT,
     template_id VARCHAR(100),
     host VARCHAR(100),
@@ -64,7 +75,11 @@ CREATE TABLE IF NOT EXISTS features (
 -- ANOMALIES TABLE
 -- =========================
 CREATE TABLE IF NOT EXISTS anomalies (
-    sequence_number BIGINT PRIMARY KEY REFERENCES logs(sequence_number) ON DELETE CASCADE,
+    run_id VARCHAR(20) NOT NULL DEFAULT 'legacy',
+    sequence_number BIGINT,
+    PRIMARY KEY (run_id, sequence_number),
+    FOREIGN KEY (run_id, sequence_number)
+        REFERENCES logs(run_id, sequence_number) ON DELETE CASCADE,
     isolation_score DOUBLE PRECISION,
     zscore_norm DOUBLE PRECISION,
     combined_score DOUBLE PRECISION,
@@ -79,9 +94,15 @@ CREATE TABLE IF NOT EXISTS anomalies (
 -- SCORES TABLE
 -- =========================
 CREATE TABLE IF NOT EXISTS scores (
-    sequence_number BIGINT PRIMARY KEY REFERENCES logs(sequence_number) ON DELETE CASCADE,
+    run_id VARCHAR(20) NOT NULL DEFAULT 'legacy',
+    sequence_number BIGINT,
+    PRIMARY KEY (run_id, sequence_number),
+    FOREIGN KEY (run_id, sequence_number)
+        REFERENCES logs(run_id, sequence_number) ON DELETE CASCADE,
     final_score DOUBLE PRECISION,
     label TEXT,
+    -- correlation_id is globalized to INC-<run_id>-<NNNN> so it stays unique
+    -- across batches and matches incidents.incident_id.
     correlation_id VARCHAR(100),
     is_root_cause BOOLEAN,
     root_cause_confidence DOUBLE PRECISION,
@@ -95,7 +116,9 @@ CREATE TABLE IF NOT EXISTS scores (
 -- INCIDENTS TABLE
 -- =========================
 CREATE TABLE IF NOT EXISTS incidents (
+    -- incident_id is globalized to INC-<run_id>-<NNNN>, unique across batches.
     incident_id TEXT PRIMARY KEY,
+    run_id VARCHAR(20) NOT NULL DEFAULT 'legacy',
     start_time TIMESTAMPTZ,
     end_time TIMESTAMPTZ,
     severity TEXT,

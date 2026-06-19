@@ -416,14 +416,71 @@ SCORING_SEVERITY_WEIGHT: float = 0.25
 # are anchored to the measured distribution (signal p1≈0.25, median≈0.31):
 # capture(med+)=0.55, signal ignored=0.3%, noise suppression=0.92.
 # Recalibrate alongside ANOMALY_SCORE_THRESHOLD once healthy-day data exists.
+#
+# 2026-06-18: validated against 3 generated clean/healthy days (no anomalies).
+# Per-batch normalisation in the anomaly detector stretches benign variance
+# across [0,1], so the "most unusual" benign lines on a healthy day reached
+# final_score≈0.60 and crossed the old 0.50 critical cutoff (false positives).
+# Raised the critical cutoff above the measured clean-day max (0.603) so a
+# healthy batch yields zero criticals. NOTE: this is a threshold band-aid — the
+# root cause is relative scoring + absolute labels (see config:418); medium
+# remains noisy on clean data.
 LABEL_IGNORE_MAX: float = 0.25
 LABEL_LOW_MAX: float = 0.30
-LABEL_MEDIUM_MAX: float = 0.50
+LABEL_MEDIUM_MAX: float = 0.65
 # Anything above LABEL_MEDIUM_MAX → critical
+
+# ---------------------------------------------------------------------------
+# Message-aware score adjustments (scoring/importance_scorer.py)
+# ---------------------------------------------------------------------------
+# The synthetic dataset tags severity inconsistently: recovery / routine
+# all-clear lines often inherit an incident block's HIGH/CRITICAL log_level
+# (inflating the severity term), while the real onset markers
+# ("<SCENARIO> event in progress - monitoring") are sometimes tagged INFO.
+# These two message-text rules correct the ranking at the scoring layer without
+# retraining the model.
+#
+# NOTE: the patterns below are tuned to THIS synthetic dataset's wording. On
+# real HPE logs, replace them with the actual recovery/onset vocabulary — the
+# mechanism generalizes, the specific word list does not.
+
+# (1) Damp recovery / all-clear lines so they fall out of the high tiers.
+RECOVERY_SCORE_DAMPING: float = 0.45
+RECOVERY_MESSAGE_PATTERNS: list = [
+    r"\bresolved\b", r"\brestored\b", r"\brecovered\b", r"\bcleared\b",
+    r"\bmitigat", r"restart complete", r"back to normal",
+    r"\bhealthy\b", r"\bstable\b", r"\bnominal\b", r"\boperational\b",
+    r"within acceptable", r"no unresolved", r"no violations",
+    r"no unauthorized", r"audit passed", r"check passed",
+    r"telemetry exported", r"statistics collection", r"performance report",
+    # Residual benign-status phrases confirmed across the May/June batches.
+    # Kept specific so they don't catch recovery-flavoured *true* detections
+    # such as "ARP rate returning to normal" or "MAC table ... reduced after
+    # aging" (those carry HIGH severity and correctly flag the incident window).
+    r"sync state synced", r"peer reachable", r"convergence complete",
+    r"no blackholes", r"no recurrence", r"no issues found",
+    r"within normal bounds", r"established, 0 down", r"operationally up",
+    r"maintenance check",
+]
+
+# (2) Floor genuine onset markers so they stay visible even when mis-tagged
+#     INFO. CRITICAL-level onsets already score higher; this only lifts
+#     under-scored ones into the medium tier (0.30–0.50). Recovery and onset
+#     sets are disjoint — recovery phrases never contain "event in progress".
+ONSET_MARKER_PATTERN: str = r"event in progress"
+ONSET_SCORE_FLOOR: float = 0.45
 
 # DBSCAN clustering parameters (incident_clusterer.py)
 DBSCAN_EPS: float = 0.08
 DBSCAN_MIN_SAMPLES: int = 5
+
+# Max time gap within a single incident. DBSCAN clusters on feature similarity
+# only, so temporally-distant but similar logs (routine medium lines spread
+# across a multi-day batch) collapse into one mega-incident spanning days. After
+# clustering we split each incident wherever consecutive logs are more than this
+# many seconds apart, then drop fragments smaller than DBSCAN_MIN_SAMPLES back to
+# noise — so incidents are bounded activity bursts, not 10-day blobs.
+INCIDENT_MAX_GAP_SECONDS: int = 900  # 15 minutes
 
 # Root cause candidates selected per incident cluster.
 ROOT_CAUSE_TOP_N: int = 3

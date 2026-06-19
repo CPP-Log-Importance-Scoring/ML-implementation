@@ -19,7 +19,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
         sys.path.insert(0, _p)
 
 import streamlit as st
-from ui import apply_theme, service_status_dot
+from ui import apply_theme, render_sidebar_nav, service_status_dot
 from data import db, es
 
 st.set_page_config(
@@ -30,24 +30,10 @@ st.set_page_config(
 )
 
 apply_theme()
+render_sidebar_nav()
 
 # ── Sidebar branding ──────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(
-        """
-        <div style='padding: 0.5rem 0 1rem 0;'>
-          <div style='font-size:1.15rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
-            ⚡ HPE CX Intelligence
-          </div>
-          <div style='font-size:0.7rem; color:#64748b; margin-top:2px; font-family:"IBM Plex Mono",monospace;'>
-            Observability Platform
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.divider()
-    
     st.markdown("<h3>System Services</h3>", unsafe_allow_html=True)
     db_ok = db.is_db_healthy()
     es_ok = es.is_elasticsearch_healthy()

@@ -23,7 +23,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
 import streamlit as st
 import pandas as pd
 from data import db, es
-from ui import apply_theme
+from ui import apply_theme, render_sidebar_nav
 from components.severity_badge import severity_badge
 from components.graph_view import render_graph
 from components.timeline_view import render_timeline
@@ -36,6 +36,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 apply_theme()
+render_sidebar_nav()
 
 
 def format_transition_label(template_id: str) -> str:

@@ -96,18 +96,25 @@ def _normalize_df(df: pd.DataFrame, columns: Iterable[str]):
     return normalized[ordered]
 
 
+# Upsert conflict keys per table. The per-log tables use a COMPOSITE key
+# (run_id, sequence_number) so successive batches accumulate instead of
+# overwriting on a bare sequence_number collision. incidents/incident_history
+# key on a globally-unique incident_id (INC-<run_id>-<NNNN>).
 _TABLE_KEY_MAP: dict = {
-    "logs": "sequence_number",
-    "features": "sequence_number",
-    "anomalies": "sequence_number",
-    "scores": "sequence_number",
-    "incidents": "incident_id",
-    "incident_history": "incident_id",
+    "logs": ["run_id", "sequence_number"],
+    "features": ["run_id", "sequence_number"],
+    "anomalies": ["run_id", "sequence_number"],
+    "scores": ["run_id", "sequence_number"],
+    "incidents": ["incident_id"],
+    "incident_history": ["incident_id"],
+    "summaries": ["correlation_id"],
 }
 
 
-def _upsert_key_for_table(table_name: str) -> str:
-    return _TABLE_KEY_MAP.get(table_name, "sequence_number")
+def _upsert_key_for_table(table_name: str) -> list:
+    """Return the list of conflict-key columns for a table."""
+    key = _TABLE_KEY_MAP.get(table_name, "sequence_number")
+    return key if isinstance(key, list) else [key]
 
 
 def write_dataframe(
@@ -131,9 +138,9 @@ def write_dataframe(
 
         use_df = _normalize_df(df, table_cols)
 
-        key_col = _upsert_key_for_table(table_name)
+        key_cols = _upsert_key_for_table(table_name)
 
-        if key_col == "log_id":
+        if "log_id" in key_cols:
             use_df = _ensure_log_id(use_df)
 
         insert_cols = [
@@ -143,7 +150,7 @@ def write_dataframe(
 
         update_cols = [
             c for c in insert_cols
-            if c != key_col
+            if c not in key_cols
         ]
 
         assignments = [
@@ -162,7 +169,7 @@ def write_dataframe(
             """
             INSERT INTO {table} ({columns})
             VALUES %s
-            ON CONFLICT ({key_col})
+            ON CONFLICT ({key_cols})
             DO UPDATE SET {updates}
             """
         ).format(
@@ -171,7 +178,9 @@ def write_dataframe(
                 sql.Identifier(c)
                 for c in insert_cols
             ),
-            key_col=sql.Identifier(key_col),
+            key_cols=sql.SQL(", ").join(
+                sql.Identifier(c) for c in key_cols
+            ),
             updates=sql.SQL(", ").join(assignments),
         )
 
