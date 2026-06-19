@@ -1,34 +1,32 @@
 ORACLE EVALUATION REPORT
 truth = log_level in ['CRITICAL', 'HIGH', 'ERROR'] (severity is excluded from IF features; final_score ranking metrics are partially favoured by the severity term)
 
-total_logs: 6023
-truth_signal_count: 12
-truth_signal_rate: 0.0020
+total_logs: 6317
+truth_signal_count: 128
+truth_signal_rate: 0.0203
 unscored_rows: 0
-anomaly_flagged_count: 211
-anomaly_flagged_rate: 0.0350
-anomaly_tp: 9
-anomaly_fp: 202
-anomaly_fn: 3
-anomaly_precision: 0.0427
-anomaly_recall: 0.7500
-anomaly_f1: 0.0807
-ranking_recall_at_k: 0.7500
+anomaly_flagged_count: 2666
+anomaly_flagged_rate: 0.4220
+anomaly_tp: 2
+anomaly_fp: 2664
+anomaly_fn: 126
+anomaly_precision: 0.0008
+anomaly_recall: 0.0156
+anomaly_f1: 0.0014
+ranking_recall_at_k: 0.0625
 ranking_recall_at_k_ml: 0.0000
-mean_final_score_signal: 0.5022
-mean_final_score_noise: 0.1014
-score_separation: 0.4008
-critical_capture_rate: 1.0000
-noise_suppression_ratio: 0.9541
-signal_incident_coverage: 0.5833
-scenario_detection_rate: 0.5000
-scenarios_detected: 1
-scenarios_total: 5
+mean_final_score_signal: 0.3120
+mean_final_score_noise: 0.1984
+score_separation: 0.1135
+critical_capture_rate: 0.7344
+noise_suppression_ratio: 0.7717
+signal_incident_coverage: 0.7422
+scenario_detection_rate: 0.6667
+scenarios_detected: 2
+scenarios_total: 3
 
 Per-scenario breakdown:
-scenario_id          training_label  n_logs  n_signal  n_signal_flagged  signal_recall  detected
- 2026-06-13                  NORMAL    1201         0                 0            0.0     False
- 2026-06-14                  NORMAL    1201         0                 0            0.0     False
- 2026-06-15     HIGH_DAEMON_FAILURE    1203         2                 0            0.0     False
- 2026-06-16 CRITICAL_ROUTE_OVERFLOW    1217        10                 9            0.9      True
- 2026-06-17                  NORMAL    1201         0                 0            0.0     False
+     scenario_id training_label  n_logs  n_signal  n_signal_flagged  signal_recall  detected
+daily_2026-06-18        UNKNOWN    2102        39                 1       0.025641      True
+daily_2026-06-19        UNKNOWN    2105        45                 1       0.022222      True
+daily_2026-06-20        UNKNOWN    2110        44                 0       0.000000     False
