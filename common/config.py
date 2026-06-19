@@ -416,9 +416,18 @@ SCORING_SEVERITY_WEIGHT: float = 0.25
 # are anchored to the measured distribution (signal p1≈0.25, median≈0.31):
 # capture(med+)=0.55, signal ignored=0.3%, noise suppression=0.92.
 # Recalibrate alongside ANOMALY_SCORE_THRESHOLD once healthy-day data exists.
+#
+# 2026-06-18: validated against 3 generated clean/healthy days (no anomalies).
+# Per-batch normalisation in the anomaly detector stretches benign variance
+# across [0,1], so the "most unusual" benign lines on a healthy day reached
+# final_score≈0.60 and crossed the old 0.50 critical cutoff (false positives).
+# Raised the critical cutoff above the measured clean-day max (0.603) so a
+# healthy batch yields zero criticals. NOTE: this is a threshold band-aid — the
+# root cause is relative scoring + absolute labels (see config:418); medium
+# remains noisy on clean data.
 LABEL_IGNORE_MAX: float = 0.25
 LABEL_LOW_MAX: float = 0.30
-LABEL_MEDIUM_MAX: float = 0.50
+LABEL_MEDIUM_MAX: float = 0.65
 # Anything above LABEL_MEDIUM_MAX → critical
 
 # ---------------------------------------------------------------------------
