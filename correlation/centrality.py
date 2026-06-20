@@ -137,13 +137,22 @@ def compute_centrality(
     score_lookup: dict = {}
 
     for template in included_templates:
+        centrality = pr_norm.get(template, global_mean_centrality)
+        betweenness = bw_norm.get(template, global_mean_betweenness)
         score_lookup[template] = {
-            "centrality_score": pr_norm.get(template, global_mean_centrality),
+            "centrality_score": centrality,
             "degree": int(graph.degree[template]),
-            "betweenness": bw_norm.get(template, global_mean_betweenness),
+            "betweenness": betweenness,
             "in_graph": True,
             "cluster_id": graph.nodes[template].get("cluster_id", "C0000"),
         }
+        # Annotate the graph node too. The JSON exporter and dashboard read
+        # centrality off node attributes (graph.nodes[t]["centrality_score"]),
+        # which build_graph never sets — so without this every exported node
+        # falls back to the 0.0 default. Scores still flow to graph_scores_df
+        # below; this just adds the graph-side copy the visualization path needs.
+        graph.nodes[template]["centrality_score"] = centrality
+        graph.nodes[template]["betweenness"] = betweenness
 
     for template in all_templates:
         if template not in score_lookup:
