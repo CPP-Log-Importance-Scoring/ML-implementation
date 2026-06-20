@@ -121,6 +121,13 @@ METRIC_SLOPE_LONG_WINDOW: int = 12
 
 SESSION_GAP_SECONDS: int = 1800  # 30-min inactivity gap within same host → new session
 
+# Upper bounds on a single session so a steady, never-idle single-host stream
+# does not collapse into one multi-day mega-session (which makes the co-occurrence
+# graph near-complete and degenerates centrality). A session also closes once it
+# spans this long or holds this many events, whichever comes first.
+SESSION_MAX_DURATION_SECONDS: int = 900   # 15 min
+SESSION_MAX_EVENTS: int = 1000
+
 # All current ingestion is HPE CX switch logs — revisit when multi-device support is added
 DEFAULT_SOURCE_TYPE: str = "switch"
 
