@@ -1,3 +1,5 @@
+import os as _os
+
 from common.env_handler import get_env
 
 # ---------------------------------------------------------------------------
@@ -131,51 +133,42 @@ SESSION_MAX_EVENTS: int = 1000
 # All current ingestion is HPE CX switch logs — revisit when multi-device support is added
 DEFAULT_SOURCE_TYPE: str = "switch"
 
-# Daemon/process name → canonical subsystem label.
-# Only entries where the raw process name is ambiguous or non-standard need to be listed.
-# All other names are upper-cased and used as-is (e.g. "OSPF" → "OSPF").
-SERVICE_ALIAS_MAP: dict = {
-    "eventmgr":    "SYSTEM",
-    "hpe-routing": "ROUTING",
-    "kernel":      "SYSTEM",
-    "sshd":        "SYSTEM",
-    "cron":        "SYSTEM",
-    "sudo":        "SYSTEM",
-    "snmpd":       "SNMP",
-    "lldpd":       "LLDP",
-    "cfgd":        "CONFIG",
-
-    # --- Generic vendor-neutral component names (mentor's synthetic dataset) ---
-    "spanning_tree_daemon":  "STP",
-    "redundancy_daemon":     "REDUNDANCY",
-    "forwarding_engine":     "FORWARDING",
-    "access_control_daemon": "ACL",
-    "routing_daemon":        "ROUTING",
-    "mac_learning":          "MAC",
-    "qos_scheduler_daemon":  "QOS",
-    "buffer_manager":        "BUFFER",
-    "physical_monitor":      "PHYSICAL",
-    "statistics_collector":  "STATS",
-    "system_logger":         "SYSTEM",
-    "process_monitor":       "SYSTEM",
-    "network_monitor":       "NETWORK",
-
-    # --- Routine/heartbeat services: the ~90% baseline noise. Collapsed to a
-    #     single NOISE label so the feature stage can suppress/down-weight them. ---
-    "monitoring":             "NOISE",
-    "continuous_monitoring":  "NOISE",
-    "routine_check":          "NOISE",
-    "periodic_status":        "NOISE",
-    "system_check":           "NOISE",
-    "status_verification":    "NOISE",
-    "health_check":           "NOISE",
-    "metrics_update":         "NOISE",
-    "frame_monitoring":       "NOISE",
-}
-
-# Canonical service label assigned to routine/heartbeat logs (see SERVICE_ALIAS_MAP).
-# Feature/noise-suppression logic can key off this single value.
+# Canonical service label assigned to routine/heartbeat logs.
+# Feature/noise-suppression logic keys off this single string value.
+# Must be defined BEFORE SERVICE_ALIAS_MAP so the profile loader can read it.
 NOISE_SERVICE_LABEL: str = "NOISE"
+
+# ---------------------------------------------------------------------------
+# Dataset-agnostic service alias map
+# ---------------------------------------------------------------------------
+# SERVICE_ALIAS_MAP is loaded from a YAML profile file instead of being
+# hardcoded. This makes it trivial to onboard a new log source without
+# touching Python code.
+#
+# Default profile  : config/dataset_profiles/hpe_synthetic.yaml
+#   — contains the original HPE CX + mentor synthetic entries, so all
+#     existing behaviour is preserved out of the box.
+#
+# Override via env : DATASET_PROFILE=config/dataset_profiles/my_ds.yaml
+#   — set this environment variable before running the pipeline to use a
+#     different dataset's alias/noise definitions.
+#
+# To add a new dataset:
+#   1. Copy config/dataset_profiles/generic.yaml → my_dataset.yaml
+#   2. Fill in service_aliases and noise_services for that log source.
+#   3. Run with DATASET_PROFILE=config/dataset_profiles/my_dataset.yaml
+#   No Python changes required.
+_DATASET_PROFILE_PATH: str = _os.environ.get(
+    "DATASET_PROFILE",
+    "config/dataset_profiles/hpe_synthetic.yaml",
+)
+
+# Lazy import here (not at top) to avoid a circular dependency:
+# service_profile imports NOISE_SERVICE_LABEL from this module, so
+# NOISE_SERVICE_LABEL must be defined first (above).
+from common.service_profile import load_service_profile as _load_service_profile  # noqa: E402
+
+SERVICE_ALIAS_MAP: dict = _load_service_profile(_DATASET_PROFILE_PATH)
 
 
 # Statistical features
