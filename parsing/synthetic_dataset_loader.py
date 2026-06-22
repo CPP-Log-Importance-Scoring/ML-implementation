@@ -56,7 +56,7 @@ from common.config import (
 from common.logger import get_logger
 from common.utils import save_parquet, validate_schema
 from parsing.log_parser import DrainParser
-from parsing.normalizer import normalize_line
+from parsing.normalizer import normalize_line, _infer_severity
 # Reuse the legacy session/action helpers so this loader stays DRY and produces
 # an identical session_id / event_action contract.
 from parsing.sessionizer import (
@@ -299,10 +299,18 @@ def _parse_section3_debug(block_lines: list[str], ctx: dict) -> list[dict]:
         # component derived from the source file stem, e.g. spanning_tree.c -> spanning_tree
         comp_token = code_location.split(".")[0] if code_location != "NONE" else "debug"
         service = _service_from_component(comp_token)
+        # Section-3 debug traces carry no explicit severity field, but their text
+        # does (e.g. "OOM pressure CRITICAL", "sent SIGKILL"). Previously every
+        # section-3 row was hardcoded INFO, which silently dropped whole incident
+        # cascades (the 2026-06-22 OOM cascade landed here, all INFO). Infer from
+        # content like the syslog path does; severity_explicit stays False since
+        # this is inferred, not an observed field.
+        full_message = f"{func}: {message}".strip(": ")
+        log_level = _infer_severity(full_message, None)
         records.append(_make_record(
             timestamp=ts, section=3, source_file=ctx["source_file"],
-            scenario_id=ctx["scenario_id"], message=f"{func}: {message}".strip(": "),
-            raw_text=line.strip(), service=service, log_level="INFO",
+            scenario_id=ctx["scenario_id"], message=full_message,
+            raw_text=line.strip(), service=service, log_level=log_level,
             severity_explicit=False, component=comp_token, code_location=code_location,
             extra_meta={"function": func},
         ))
