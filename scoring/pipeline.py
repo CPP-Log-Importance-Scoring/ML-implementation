@@ -76,6 +76,22 @@ def run_scoring_pipeline(
     scored_df = apply_message_adjustments(scored_df)
     scored_df = scored_df.drop(columns=["message"])
 
+    # Component event-rate drift: deterministic, model-free corroborating signal
+    # that lifts gradual cascades (no burst signature) the IsolationForest misses.
+    # Additive on final_score — existing ML/graph/severity weights are unchanged.
+    if cfg.SCORING_DRIFT_ENABLED:
+        from scoring.drift_scorer import compute_drift_scores
+        drift = compute_drift_scores(sessionized)
+        scored_df = scored_df.merge(drift, on="sequence_number", how="left")
+        scored_df["drift_score"] = scored_df["drift_score"].fillna(0.0)
+        n_lifted = int((scored_df["drift_score"] > 0).sum())
+        scored_df["final_score"] = (
+            scored_df["final_score"] + cfg.SCORING_DRIFT_WEIGHT * scored_df["drift_score"]
+        ).clip(0.0, 1.0)
+        scored_df = scored_df.drop(columns=["drift_score"])
+        logger.info("Drift term applied to %d rows (weight=%.2f).",
+                    n_lifted, cfg.SCORING_DRIFT_WEIGHT)
+
     logger.info("Scoring step 2/4: mapping labels")
     scored_df = map_labels(scored_df)
 
