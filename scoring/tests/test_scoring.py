@@ -103,60 +103,52 @@ def build_test_inputs(n_rows: int = 100, n_sessions: int = 5):
 # ---------------------------------------------------------------------------
 
 def _make_clusterable_df() -> pd.DataFrame:
-    """Two tight DBSCAN clusters + 2 noise points + 5 ignore rows.
+    """Fixture for anomaly-seeded temporal windowing.
 
-    Cluster A (10 rows, "critical"): all features ≈ 0.9, cluster_id spans
-        C0000 and C0001 → is_cross_system should be True after clustering.
-    Cluster B (10 rows, "low"):    all features ≈ 0.1, cluster_id = C0002
-        → is_cross_system should be False.
-    Noise (2 rows, "medium"):      features ≈ 0.5, only 2 rows < min_samples.
-    Ignore (5 rows, "ignore"):     excluded from DBSCAN entirely.
+    Incident A ("incidentA", 5 rows, critical, score 0.9): a burst at T+0..4s,
+        cluster_id spans C0000 and C0001 → is_cross_system should be True.
+    Incident B ("incidentB", 5 rows, medium, score 0.7): a burst ~1h later,
+        cluster_id = C0002 → is_cross_system should be False.
+    Isolated  ("isolated", 2 rows, medium, score 0.6): a 3rd burst, but only 2
+        seeds (< INCIDENT_MIN_SEEDS) → dropped back to noise (None).
+    Low       ("low", 5 rows, low, score 0.1): not seeds (below score floor).
+    Ignore    ("ignore", 5 rows): never seeds.
+
+    The "_role" column marks each group for assertions (passed through untouched).
     """
+    base = pd.Timestamp("2024-01-01")
     rows: list[dict] = []
     seq = 1
 
-    for i in range(10):  # Cluster A
+    def add(role, label, score, cluster_id, t_offset, n):
+        nonlocal seq
+        for i in range(n):
+            rows.append({
+                "sequence_number": seq, "session_id": role,
+                "timestamp": base + pd.Timedelta(seconds=t_offset + i),
+                "final_score": score, "centrality_score": score,
+                "temporal_proximity": score, "label": label,
+                "cluster_id": cluster_id, "in_graph": True,
+                "correlation_id": None, "is_cross_system": False, "_role": role,
+            })
+            seq += 1
+
+    # Incident A — burst at T+0..11s, spans two graph communities (> MIN_SEEDS)
+    for i in range(12):
         rows.append({
-            "sequence_number": seq, "session_id": "S000",
-            "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(seconds=i),
+            "sequence_number": seq, "session_id": "incidentA",
+            "timestamp": base + pd.Timedelta(seconds=i),
             "final_score": 0.9, "centrality_score": 0.9, "temporal_proximity": 0.9,
-            "label": "critical",
-            "cluster_id": "C0000" if i < 5 else "C0001",  # spans 2 graph clusters
+            "label": "critical", "cluster_id": "C0000" if i < 7 else "C0001",
             "in_graph": True, "correlation_id": None, "is_cross_system": False,
+            "_role": "incidentA",
         })
         seq += 1
 
-    for i in range(10):  # Cluster B
-        rows.append({
-            "sequence_number": seq, "session_id": "S001",
-            "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(seconds=i),
-            "final_score": 0.1, "centrality_score": 0.1, "temporal_proximity": 0.1,
-            "label": "low", "cluster_id": "C0002",
-            "in_graph": True, "correlation_id": None, "is_cross_system": False,
-        })
-        seq += 1
-
-    for i in range(2):  # Noise — only 2 rows, below min_samples=5
-        rows.append({
-            "sequence_number": seq, "session_id": "S002",
-            "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(seconds=i),
-            "final_score": 0.5 + i * 0.01,
-            "centrality_score": 0.5 + i * 0.01,
-            "temporal_proximity": 0.5 + i * 0.01,
-            "label": "medium", "cluster_id": "C0003",
-            "in_graph": True, "correlation_id": None, "is_cross_system": False,
-        })
-        seq += 1
-
-    for i in range(5):  # Ignore — excluded from clustering
-        rows.append({
-            "sequence_number": seq, "session_id": "S003",
-            "timestamp": pd.Timestamp("2024-01-01") + pd.Timedelta(seconds=i),
-            "final_score": 0.15, "centrality_score": 0.15, "temporal_proximity": 0.0,
-            "label": "ignore", "cluster_id": "C0000",
-            "in_graph": False, "correlation_id": None, "is_cross_system": False,
-        })
-        seq += 1
+    add("incidentB", "medium", 0.7, "C0002", t_offset=3600, n=12)  # ~1h later
+    add("isolated",  "medium", 0.6, "C0003", t_offset=10800, n=4)  # < MIN_SEEDS → noise
+    add("low",       "low",    0.1, "C0004", t_offset=20,   n=5)   # not seeds
+    add("ignore",    "ignore", 0.15, "C0005", t_offset=40,  n=5)   # not seeds
 
     return pd.DataFrame(rows)
 
@@ -401,30 +393,37 @@ class TestIncidentClusterer:
         non_ignore = result[result["label"] != "ignore"]
         assert non_ignore["correlation_id"].notna().any()
 
-    def test_noise_rows_get_null_correlation_id(self):
+    def test_isolated_seeds_below_min_get_null_correlation_id(self):
         df = _make_clusterable_df()
         result = cluster_incidents(df)
-        # The 2 isolated medium rows have fewer than min_samples=5 neighbors → noise
-        medium_mask = df["label"] == "medium"
-        assert result.loc[medium_mask, "correlation_id"].isna().all()
+        # The 2 "isolated" seeds are below INCIDENT_MIN_SEEDS → dropped to noise.
+        iso_mask = df["_role"] == "isolated"
+        assert result.loc[iso_mask, "correlation_id"].isna().all()
+
+    def test_low_score_rows_do_not_seed_incidents(self):
+        df = _make_clusterable_df()
+        result = cluster_incidents(df)
+        # Benign low-score rows are not seeds → never get an incident id.
+        low_mask = df["_role"] == "low"
+        assert result.loc[low_mask, "correlation_id"].isna().all()
 
     def test_is_cross_system_true_for_multiple_cluster_ids(self):
         df = _make_clusterable_df()
         result = cluster_incidents(df)
-        # Cluster A rows span C0000 and C0001 → cross-system
-        critical_mask = df["label"] == "critical"
-        assigned = result.loc[critical_mask, "correlation_id"].dropna().unique()
-        assert len(assigned) > 0, "Cluster A rows must form at least one incident"
+        # Incident A spans C0000 and C0001 → cross-system
+        a_mask = df["_role"] == "incidentA"
+        assigned = result.loc[a_mask, "correlation_id"].dropna().unique()
+        assert len(assigned) == 1, "Incident A rows must form exactly one incident"
         incident_rows = result[result["correlation_id"] == assigned[0]]
         assert incident_rows["is_cross_system"].all()
 
     def test_is_cross_system_false_for_single_system(self):
         df = _make_clusterable_df()
         result = cluster_incidents(df)
-        # Cluster B rows all have cluster_id="C0002" → not cross-system
-        low_mask = df["label"] == "low"
-        assigned = result.loc[low_mask, "correlation_id"].dropna().unique()
-        assert len(assigned) > 0, "Cluster B rows must form at least one incident"
+        # Incident B rows all have cluster_id="C0002" → not cross-system
+        b_mask = df["_role"] == "incidentB"
+        assigned = result.loc[b_mask, "correlation_id"].dropna().unique()
+        assert len(assigned) == 1, "Incident B rows must form exactly one incident"
         incident_rows = result[result["correlation_id"] == assigned[0]]
         assert not incident_rows["is_cross_system"].any()
 

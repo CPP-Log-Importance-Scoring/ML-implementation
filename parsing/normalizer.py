@@ -150,6 +150,12 @@ _SEVERITY_TOKEN_MAP = {
 }
 
 _KEYWORD_OVERRIDES: list[tuple[re.Pattern, str]] = [
+    # Resource-exhaustion / kernel events — critical in any OS or network stack,
+    # not specific to this dataset. Placed first so they win over the softer
+    # "memory.*usage → WARN" rule below.
+    (re.compile(r"out of memory|\boom\b|oom[ _-]?kill|oom pressure", re.I), "CRITICAL"),
+    (re.compile(r"\bsigkill\b|killed process|process .*\bkilled\b",  re.I), "CRITICAL"),
+    (re.compile(r"kernel panic|\bpanic\b|watchdog timeout",          re.I), "CRITICAL"),
     (re.compile(r"changed state from \S+ to DOWN",            re.I), "CRITICAL"),
     (re.compile(r"adjacency.*lost|adjacency.*down",           re.I), "CRITICAL"),
     (re.compile(r"port scan detected",                        re.I), "CRITICAL"),

@@ -69,6 +69,13 @@ def build_graph(sessionized_logs: pd.DataFrame) -> nx.Graph:
     top = template_freq.nlargest(cfg.GRAPH_MAX_NODES)
     included_templates = set(top.index)
 
+    # Document (per-session) frequency: number of DISTINCT sessions each template
+    # appears in. PMI is a per-session association measure, so its denominator
+    # must live on the session scale. Using total occurrence counts (template_freq)
+    # instead inflates the denominator on high-volume data — collapsing nearly all
+    # PMI to 0 and degenerating centrality (see compute_centrality).
+    session_doc_freq = sessionized_logs.groupby("template_id")["session_id"].nunique()
+
     # Only keep columns we need to minimise memory
     working_df = sessionized_logs.loc[
         sessionized_logs["template_id"].isin(included_templates),
@@ -137,12 +144,15 @@ def build_graph(sessionized_logs: pd.DataFrame) -> nx.Graph:
         graph.add_node(template, frequency=int(template_freq[template]))
 
     for (t_a, t_b), count in session_cooccurrence.items():
-        freq_a = int(template_freq[t_a])
-        freq_b = int(template_freq[t_b])
+        df_a = int(session_doc_freq[t_a])
+        df_b = int(session_doc_freq[t_b])
         session_weight = count / n_sessions
-        # Smoothed log-PMI: log((P(A,B) * N) / (freq_A * freq_B) + epsilon)
+        # Smoothed log-PMI on the per-session scale:
+        #   log( P(A,B) / (P(A)·P(B)) ) = log( (count · N) / (df_A · df_B) )
+        # df_* = sessions containing the template (document frequency), NOT total
+        # occurrences — the latter collapses PMI to 0 on high-volume datasets.
         pmi_raw = math.log(
-            (count * n_sessions) / (freq_a * freq_b) + 1e-10
+            (count * n_sessions) / (df_a * df_b) + 1e-10
         )
         positive_pmi = max(0.0, pmi_raw)
         graph.add_edge(

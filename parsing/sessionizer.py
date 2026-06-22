@@ -47,6 +47,8 @@ from parsing.normalizer import normalize_line
 from parsing.log_parser import DrainParser
 from common.config import (
     SESSION_GAP_SECONDS,
+    SESSION_MAX_DURATION_SECONDS,
+    SESSION_MAX_EVENTS,
     SESSIONIZED_LOGS_PATH,
     SEVERITY_WEIGHTS,
     DEFAULT_SEVERITY_WEIGHT,
@@ -80,7 +82,14 @@ REQUIRED_OUTPUT_COLUMNS = [
 # ---------------------------------------------------------------------------
 
 def _assign_sessions(df: pd.DataFrame) -> pd.DataFrame:
-    """Add session_id column by grouping on host + time gap."""
+    """Add session_id column by grouping on host + time gap.
+
+    A session closes on a host change, an inactivity gap > SESSION_GAP_SECONDS,
+    or once it reaches SESSION_MAX_DURATION_SECONDS / SESSION_MAX_EVENTS. The
+    duration/size caps keep a steady, never-idle single-host stream from
+    collapsing into one mega-session (which would make the downstream
+    co-occurrence graph near-complete and degenerate centrality).
+    """
     df = df.sort_values(["host", "timestamp"]).reset_index(drop=True)
 
     ts_series = pd.to_datetime(df["timestamp"])
@@ -90,14 +99,29 @@ def _assign_sessions(df: pd.DataFrame) -> pd.DataFrame:
     session_ids = []
     current_session_id: str | None = None
     _seen_bases: dict[str, int] = {}
+    session_start_ts = None      # first timestamp of the current session
+    session_event_count = 0      # events accumulated in the current session
     for i in range(len(df)):
-        if host_changed.iloc[i] or gap_seconds.iloc[i] > SESSION_GAP_SECONDS:
-            session_start_ts = ts_series.iloc[i].to_pydatetime()
+        ts_i = ts_series.iloc[i].to_pydatetime()
+        duration_exceeded = (
+            session_start_ts is not None
+            and (ts_i - session_start_ts).total_seconds() > SESSION_MAX_DURATION_SECONDS
+        )
+        size_exceeded = session_event_count >= SESSION_MAX_EVENTS
+        if (
+            host_changed.iloc[i]
+            or gap_seconds.iloc[i] > SESSION_GAP_SECONDS
+            or duration_exceeded
+            or size_exceeded
+        ):
             host = df["host"].iloc[i]
-            base = f"{host}_{session_start_ts.strftime('%Y%m%dT%H%M%S')}"
+            base = f"{host}_{ts_i.strftime('%Y%m%dT%H%M%S')}"
             count = _seen_bases.get(base, 0) + 1
             _seen_bases[base] = count
             current_session_id = base if count == 1 else f"{base}_{count}"
+            session_start_ts = ts_i
+            session_event_count = 0
+        session_event_count += 1
         session_ids.append(current_session_id)
 
     df["session_id"] = session_ids

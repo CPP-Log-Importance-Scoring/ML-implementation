@@ -21,9 +21,10 @@ AGENTS.md
 
 test_summary.py
 
-ml/model_store/*.pkl
-ml/model_store/*.json
-ml/model_store/retrain_state.json
+# Model artifacts (regenerable). Whole dir, recursively — the old
+# ml/model_store/*.pkl globs were non-recursive and missed _archive/**,
+# which let ~70 model binaries leak into `git add -A`.
+ml/model_store/
 
 .claude
 docs/

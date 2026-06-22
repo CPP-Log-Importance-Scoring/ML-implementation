@@ -438,6 +438,43 @@ class TestGraphVisualizer:
         graph, data = exported
         assert data["metadata"]["n_nodes"] == graph.number_of_nodes()
 
+    def test_exported_centrality_reflects_computed_scores(self, tmp_path):
+        """Regression guard: the exported JSON must carry compute_centrality's
+        per-node scores, not the 0.0 node-attribute default.
+
+        compute_centrality writes scores into graph_scores_df *and* annotates the
+        graph nodes; export_graph_json reads centrality off the node attributes.
+        If that annotation is dropped, every node exports centrality_score 0.0
+        (the attrs.get(..., 0.0) fallback) even though the computed scores are
+        non-zero — the bug this test guards against.
+        """
+        df = build_sessions_df(n_sessions=5, templates_per_session=3)
+        graph = build_graph(df)
+        result = compute_centrality(graph, df)  # annotates graph nodes in place
+
+        out = str(tmp_path / "graph.json")
+        export_graph_json(graph, out)
+        with open(out) as f:
+            data = json.load(f)
+
+        exported = {n["id"]: n["centrality_score"] for n in data["nodes"]}
+
+        # Symptom guard: must not collapse to the all-zero default.
+        assert any(v > 0.0 for v in exported.values()), (
+            "all exported centrality_scores are 0.0 — graph nodes were not "
+            "annotated with centrality"
+        )
+
+        # Faithfulness: each exported node value must equal the centrality the
+        # engine computed for that template (joined via sequence_number).
+        seq_to_tmpl = df.set_index("sequence_number")["template_id"]
+        computed = {
+            seq_to_tmpl[row["sequence_number"]]: row["centrality_score"]
+            for _, row in result.iterrows()
+        }
+        for node_id, score in exported.items():
+            assert score == pytest.approx(computed[node_id], abs=1e-5)
+
     def test_export_graph_png_returns_none(self, tmp_path):
         df = build_sessions_df(n_sessions=1, templates_per_session=2)
         graph = build_graph(df)

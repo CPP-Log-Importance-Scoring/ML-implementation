@@ -121,6 +121,13 @@ METRIC_SLOPE_LONG_WINDOW: int = 12
 
 SESSION_GAP_SECONDS: int = 1800  # 30-min inactivity gap within same host → new session
 
+# Upper bounds on a single session so a steady, never-idle single-host stream
+# does not collapse into one multi-day mega-session (which makes the co-occurrence
+# graph near-complete and degenerates centrality). A session also closes once it
+# spans this long or holds this many events, whichever comes first.
+SESSION_MAX_DURATION_SECONDS: int = 900   # 15 min
+SESSION_MAX_EVENTS: int = 1000
+
 # All current ingestion is HPE CX switch logs — revisit when multi-device support is added
 DEFAULT_SOURCE_TYPE: str = "switch"
 
@@ -470,16 +477,103 @@ RECOVERY_MESSAGE_PATTERNS: list = [
 ONSET_MARKER_PATTERN: str = r"event in progress"
 ONSET_SCORE_FLOOR: float = 0.45
 
-# DBSCAN clustering parameters (incident_clusterer.py)
-DBSCAN_EPS: float = 0.08
-DBSCAN_MIN_SAMPLES: int = 5
+# ---------------------------------------------------------------------------
+# Severity credibility gate (scoring/importance_scorer.py)
+# ---------------------------------------------------------------------------
+# A log line whose MESSAGE asserts normal / healthy operation must not earn the
+# severity term's importance bonus just because its severity TAG says CRITICAL.
+# Both the synthetic generator and real vendor logs routinely emit benign status
+# lines at an inflated log_level — e.g. "ASIC temperature: 50C - NORMAL
+# (threshold: 55C)" carried at severity=CRITICAL. Left unchecked, those lines
+# are the ONLY rows that reach the "critical" label (verified 2026-06-22 on
+# clean_days + anomaly_days), while the genuine incidents sit in "medium".
+#
+# The gate reverts a contradicted line's severity contribution to the INFO
+# baseline (DEFAULT_SEVERITY_WEIGHT), so it must earn any score from the ML /
+# graph signal instead of a label the message itself contradicts. It only
+# REMOVES an unearned bonus — it never lowers a line below its ML/graph score,
+# so it cannot suppress a true detection.
+#
+# Generalizes across datasets; the list below is a starting lexicon of normalcy
+# assertions — tune per vendor, same caveat as RECOVERY_MESSAGE_PATTERNS.
+SEVERITY_GATE_ENABLED: bool = True
+SEVERITY_GATE_BENIGN_PATTERNS: list = [
+    r"-\s*normal\b", r"\bnominal\b", r"\bhealthy\b",
+    r"within bounds", r"within limits", r"within normal",
+    r"no alerts", r"no anomal", r"no errors", r"no issues",
+    r"check passed", r"all clear",
+]
 
-# Max time gap within a single incident. DBSCAN clusters on feature similarity
-# only, so temporally-distant but similar logs (routine medium lines spread
-# across a multi-day batch) collapse into one mega-incident spanning days. After
-# clustering we split each incident wherever consecutive logs are more than this
-# many seconds apart, then drop fragments smaller than DBSCAN_MIN_SAMPLES back to
-# noise — so incidents are bounded activity bursts, not 10-day blobs.
+# ---------------------------------------------------------------------------
+# Component event-rate drift signal (scoring/drift_scorer.py)
+# ---------------------------------------------------------------------------
+# The IsolationForest features are point-in-time / burstiness based, so a
+# GRADUAL failure that emits one log every ~40s (e.g. an OOM kill cascade
+# spread over 17 minutes) has no burst signature and is missed entirely
+# (verified 2026-06-22). This signal catches it deterministically, without the
+# model: bin each run into fixed windows, count events per component per bin,
+# and z-score every bin against that component's OWN full-day baseline (silent
+# bins included). A normally-quiet component that suddenly chatters — whether a
+# 20-event burst or a slow drip over many bins — lands in high-z bins.
+#
+# Self-calibrating per component, so it needs no per-dataset tuning and is
+# robust to cold-start and to training-set contamination. Only the ELEVATED
+# direction counts (a quiet stretch is not a drift anomaly). It is an additive
+# corroborating term on final_score; the existing ML/graph/severity weights are
+# left unchanged (this adds evidence, it does not re-fit the blend).
+# DISABLED BY DEFAULT. Empirically (2026-06-22) a WITHIN-FILE per-component
+# baseline cannot separate these anomalies from clean-day chatter: the clean day
+# reaches MEMORY_MANAGER rate-ratio 3.0, while the real PROTOCOL_STARVATION's
+# component (stp_state, already high-rate) hits only 1.14 and OOM's
+# MEMORY_MANAGER (active all day via the leak) only 3.0 — i.e. the anomaly's own
+# component spikes LESS than normal periodic noise. A loose threshold floods the
+# clean day with false criticals; a tight one misses the anomalies. The signal
+# the model needs is a CROSS-DAY baseline (this component's rate today vs the
+# same component on known-clean days) — which requires the clean-baseline corpus.
+# The code below is the foundation for that; left off until the baseline exists
+# so it can't ship as a knob tuned to one dataset.
+SCORING_DRIFT_ENABLED: bool = False
+SCORING_DRIFT_WEIGHT: float = 0.40
+DRIFT_BIN_SECONDS: int = 120
+DRIFT_MIN_COMPONENT_EVENTS: int = 8      # need history before trusting a rate
+DRIFT_MIN_ACTIVE_BINS: int = 3           # need a typical-rate baseline to beat
+# Drift fires on a bin whose count exceeds the component's TYPICAL active-bin
+# rate (median over non-zero bins) by a ratio. Comparing against the typical
+# ACTIVE rate — not against the zero-filled baseline — is what stops normal
+# periodic components (steady ~1/bin) from lighting up. Ramps 0→1 between MIN
+# and FULL multiples of that median.
+DRIFT_RATIO_MIN: float = 3.0             # <3× median active rate → no drift
+DRIFT_RATIO_FULL: float = 8.0            # ≥8× median active rate → full drift
+
+# Incident clustering (incident_clusterer.py)
+# ------------------------------------------------------------------
+# Anomaly-SEEDED temporal windowing. The old approach (DBSCAN over
+# [final_score, centrality, temporal_proximity]) clustered by score-similarity,
+# which (a) merged the dense benign mass into day-spanning blobs and (b) dropped
+# the rare high-score anomalies as DBSCAN noise — verified 2026-06-22: 0/21
+# critical rows landed in any incident, incidents spanned up to 22.9h.
+#
+# New approach: seed only on the "interesting" rows (anomalous / high-score /
+# high-severity), then group seeds that are within INCIDENT_WINDOW_SECONDS of
+# each other in ABSOLUTE time. Gaps are measured between SEEDS (sparse), not all
+# logs, so continuous background noise can't bridge incidents and a real
+# incident stays a minutes-long burst. Groups with < INCIDENT_MIN_SEEDS seeds
+# are dropped, so isolated false-positive seeds on clean days form no incident.
+# Seeding: a row is a seed if it is anomalous OR carries a non-trivial label OR
+# is high severity. The real anomaly bursts (PROTOCOL_STARVATION, SPLIT_BRAIN)
+# are DENSE clusters of `medium` rows whose final_score sits below 0.5, so the
+# per-row score is NOT the discriminator — DENSITY is. Seed broadly on label,
+# then let INCIDENT_MIN_SEEDS reject scattered clean-day medium noise: a real
+# incident packs many seeds into one window; clean noise spreads ~1 per window.
+INCIDENT_WINDOW_SECONDS: int = 180      # consecutive seeds within this → same incident
+INCIDENT_MIN_SEEDS: int = 10            # density floor: fewer seeds in window → not an incident
+INCIDENT_SEED_LABELS: tuple = ("medium", "critical")  # labels that seed
+INCIDENT_SEED_SCORE_MIN: float = 0.50   # final_score at/above this also seeds
+INCIDENT_SEED_SEVERITY_MIN: float = 0.70  # event_weight at/above this (ERROR+) also seeds
+
+# Legacy DBSCAN knobs — retained for backward-compat / fallback only.
+DBSCAN_EPS: float = 0.08
+DBSCAN_MIN_SAMPLES: int = 3
 INCIDENT_MAX_GAP_SECONDS: int = 900  # 15 minutes
 
 # Root cause candidates selected per incident cluster.
