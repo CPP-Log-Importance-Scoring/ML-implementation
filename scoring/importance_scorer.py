@@ -224,11 +224,32 @@ def apply_message_adjustments(df: pd.DataFrame) -> pd.DataFrame:
         lower=cfg.ONSET_SCORE_FLOOR
     )
 
+    # (3) severity credibility gate — strip the severity-term bonus from lines
+    #     whose message asserts normal operation but whose log_level tag was
+    #     inflated (e.g. "...- NORMAL" carried at severity=CRITICAL). score()
+    #     baked SCORING_SEVERITY_WEIGHT * event_weight into final_score; here we
+    #     subtract the excess over the INFO baseline so the line keeps only its
+    #     ML/graph score. Requires event_weight (present from the P2 features
+    #     contract); no-op for legacy callers without it.
+    n_gated = 0
+    if cfg.SEVERITY_GATE_ENABLED and "event_weight" in df.columns:
+        benign = pd.Series(False, index=df.index)
+        for pat in cfg.SEVERITY_GATE_BENIGN_PATTERNS:
+            benign |= msg.str.contains(pat, case=False, regex=True, na=False)
+        # Only act where the tag actually inflated the score above INFO, and
+        # never gate a genuine onset marker we just floored.
+        gate_mask = benign & (df["event_weight"] > cfg.DEFAULT_SEVERITY_WEIGHT) & (~onset)
+        excess = cfg.SCORING_SEVERITY_WEIGHT * (
+            df.loc[gate_mask, "event_weight"] - cfg.DEFAULT_SEVERITY_WEIGHT
+        )
+        df.loc[gate_mask, "final_score"] = df.loc[gate_mask, "final_score"] - excess
+        n_gated = int(gate_mask.sum())
+
     df["final_score"] = df["final_score"].clip(0.0, 1.0)
     logger.info(
         "Message adjustments: damped %d recovery/all-clear lines, "
-        "floored %d onset markers",
-        int(recovery.sum()), int(onset.sum()),
+        "floored %d onset markers, severity-gated %d benign-tag lines",
+        int(recovery.sum()), int(onset.sum()), n_gated,
     )
     return df
 

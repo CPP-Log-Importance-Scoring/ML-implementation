@@ -477,6 +477,74 @@ RECOVERY_MESSAGE_PATTERNS: list = [
 ONSET_MARKER_PATTERN: str = r"event in progress"
 ONSET_SCORE_FLOOR: float = 0.45
 
+# ---------------------------------------------------------------------------
+# Severity credibility gate (scoring/importance_scorer.py)
+# ---------------------------------------------------------------------------
+# A log line whose MESSAGE asserts normal / healthy operation must not earn the
+# severity term's importance bonus just because its severity TAG says CRITICAL.
+# Both the synthetic generator and real vendor logs routinely emit benign status
+# lines at an inflated log_level — e.g. "ASIC temperature: 50C - NORMAL
+# (threshold: 55C)" carried at severity=CRITICAL. Left unchecked, those lines
+# are the ONLY rows that reach the "critical" label (verified 2026-06-22 on
+# clean_days + anomaly_days), while the genuine incidents sit in "medium".
+#
+# The gate reverts a contradicted line's severity contribution to the INFO
+# baseline (DEFAULT_SEVERITY_WEIGHT), so it must earn any score from the ML /
+# graph signal instead of a label the message itself contradicts. It only
+# REMOVES an unearned bonus — it never lowers a line below its ML/graph score,
+# so it cannot suppress a true detection.
+#
+# Generalizes across datasets; the list below is a starting lexicon of normalcy
+# assertions — tune per vendor, same caveat as RECOVERY_MESSAGE_PATTERNS.
+SEVERITY_GATE_ENABLED: bool = True
+SEVERITY_GATE_BENIGN_PATTERNS: list = [
+    r"-\s*normal\b", r"\bnominal\b", r"\bhealthy\b",
+    r"within bounds", r"within limits", r"within normal",
+    r"no alerts", r"no anomal", r"no errors", r"no issues",
+    r"check passed", r"all clear",
+]
+
+# ---------------------------------------------------------------------------
+# Component event-rate drift signal (scoring/drift_scorer.py)
+# ---------------------------------------------------------------------------
+# The IsolationForest features are point-in-time / burstiness based, so a
+# GRADUAL failure that emits one log every ~40s (e.g. an OOM kill cascade
+# spread over 17 minutes) has no burst signature and is missed entirely
+# (verified 2026-06-22). This signal catches it deterministically, without the
+# model: bin each run into fixed windows, count events per component per bin,
+# and z-score every bin against that component's OWN full-day baseline (silent
+# bins included). A normally-quiet component that suddenly chatters — whether a
+# 20-event burst or a slow drip over many bins — lands in high-z bins.
+#
+# Self-calibrating per component, so it needs no per-dataset tuning and is
+# robust to cold-start and to training-set contamination. Only the ELEVATED
+# direction counts (a quiet stretch is not a drift anomaly). It is an additive
+# corroborating term on final_score; the existing ML/graph/severity weights are
+# left unchanged (this adds evidence, it does not re-fit the blend).
+# DISABLED BY DEFAULT. Empirically (2026-06-22) a WITHIN-FILE per-component
+# baseline cannot separate these anomalies from clean-day chatter: the clean day
+# reaches MEMORY_MANAGER rate-ratio 3.0, while the real PROTOCOL_STARVATION's
+# component (stp_state, already high-rate) hits only 1.14 and OOM's
+# MEMORY_MANAGER (active all day via the leak) only 3.0 — i.e. the anomaly's own
+# component spikes LESS than normal periodic noise. A loose threshold floods the
+# clean day with false criticals; a tight one misses the anomalies. The signal
+# the model needs is a CROSS-DAY baseline (this component's rate today vs the
+# same component on known-clean days) — which requires the clean-baseline corpus.
+# The code below is the foundation for that; left off until the baseline exists
+# so it can't ship as a knob tuned to one dataset.
+SCORING_DRIFT_ENABLED: bool = False
+SCORING_DRIFT_WEIGHT: float = 0.40
+DRIFT_BIN_SECONDS: int = 120
+DRIFT_MIN_COMPONENT_EVENTS: int = 8      # need history before trusting a rate
+DRIFT_MIN_ACTIVE_BINS: int = 3           # need a typical-rate baseline to beat
+# Drift fires on a bin whose count exceeds the component's TYPICAL active-bin
+# rate (median over non-zero bins) by a ratio. Comparing against the typical
+# ACTIVE rate — not against the zero-filled baseline — is what stops normal
+# periodic components (steady ~1/bin) from lighting up. Ramps 0→1 between MIN
+# and FULL multiples of that median.
+DRIFT_RATIO_MIN: float = 3.0             # <3× median active rate → no drift
+DRIFT_RATIO_FULL: float = 8.0            # ≥8× median active rate → full drift
+
 # DBSCAN clustering parameters (incident_clusterer.py)
 DBSCAN_EPS: float = 0.08
 DBSCAN_MIN_SAMPLES: int = 5
