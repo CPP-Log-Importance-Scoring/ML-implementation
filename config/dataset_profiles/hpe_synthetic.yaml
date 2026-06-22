@@ -1,0 +1,86 @@
+# =============================================================================
+# Dataset profile: HPE CX switch OS + mentor synthetic log dataset
+# =============================================================================
+# This file is the authoritative source of truth for:
+#   1. service_aliases  — daemon/process name → canonical subsystem label
+#   2. noise_services   — process names whose logs are routine heartbeats that
+#                         should be suppressed / down-weighted by the feature stage
+#
+# HOW TO USE
+# ----------
+# The pipeline loads this file by default. To use a different profile, set the
+# environment variable before running the pipeline:
+#
+#   DATASET_PROFILE=config/dataset_profiles/my_dataset.yaml python pipeline.py ...
+#
+# HOW TO ADD A NEW DATASET
+# ------------------------
+# Copy config/dataset_profiles/generic.yaml, rename it, and fill in the entries
+# that apply to your log source. You never need to touch Python code.
+#
+# MATCHING RULES
+# --------------
+# - Keys in service_aliases are matched case-insensitively against the raw
+#   process/daemon name extracted from each log line.
+# - Any process name not found in service_aliases is upper-cased and used as-is
+#   (e.g. "ospf" → "OSPF").
+# - Entries in noise_services are merged into service_aliases automatically,
+#   mapped to the NOISE label, so they only need to be listed once (here).
+# =============================================================================
+
+profile_name: hpe_synthetic
+
+# ---------------------------------------------------------------------------
+# Service aliases
+# ---------------------------------------------------------------------------
+# Format: <lowercase_process_name>: <CANONICAL_LABEL>
+# Labels are free-form uppercase strings; keep them consistent across profiles.
+
+service_aliases:
+
+  # --- Real HPE CX switch OS daemons ---
+  eventmgr:    SYSTEM
+  hpe-routing: ROUTING
+  kernel:      SYSTEM
+  sshd:        SYSTEM
+  cron:        SYSTEM
+  sudo:        SYSTEM
+  snmpd:       SNMP
+  lldpd:       LLDP
+  cfgd:        CONFIG
+
+  # --- Generic vendor-neutral component names (mentor's synthetic dataset) ---
+  spanning_tree_daemon:  STP
+  redundancy_daemon:     REDUNDANCY
+  forwarding_engine:     FORWARDING
+  access_control_daemon: ACL
+  routing_daemon:        ROUTING
+  mac_learning:          MAC
+  qos_scheduler_daemon:  QOS
+  buffer_manager:        BUFFER
+  physical_monitor:      PHYSICAL
+  statistics_collector:  STATS
+  system_logger:         SYSTEM
+  process_monitor:       SYSTEM
+  network_monitor:       NETWORK
+
+# ---------------------------------------------------------------------------
+# Noise services
+# ---------------------------------------------------------------------------
+# Process names listed here represent routine heartbeat / health-check traffic
+# that makes up ~90% of log volume but carries no anomaly signal.
+# They are automatically assigned the NOISE label by the profile loader,
+# which allows the feature stage to suppress / down-weight them.
+#
+# Add or remove entries here as you profile your dataset's log volume.
+
+noise_services:
+  - monitoring
+  - continuous_monitoring
+  - routine_check
+  - periodic_status
+  - system_check
+  - status_verification
+  - health_check
+  - metrics_update
+  - frame_monitoring
