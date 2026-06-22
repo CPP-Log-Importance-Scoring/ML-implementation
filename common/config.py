@@ -545,16 +545,35 @@ DRIFT_MIN_ACTIVE_BINS: int = 3           # need a typical-rate baseline to beat
 DRIFT_RATIO_MIN: float = 3.0             # <3× median active rate → no drift
 DRIFT_RATIO_FULL: float = 8.0            # ≥8× median active rate → full drift
 
-# DBSCAN clustering parameters (incident_clusterer.py)
-DBSCAN_EPS: float = 0.08
-DBSCAN_MIN_SAMPLES: int = 5
+# Incident clustering (incident_clusterer.py)
+# ------------------------------------------------------------------
+# Anomaly-SEEDED temporal windowing. The old approach (DBSCAN over
+# [final_score, centrality, temporal_proximity]) clustered by score-similarity,
+# which (a) merged the dense benign mass into day-spanning blobs and (b) dropped
+# the rare high-score anomalies as DBSCAN noise — verified 2026-06-22: 0/21
+# critical rows landed in any incident, incidents spanned up to 22.9h.
+#
+# New approach: seed only on the "interesting" rows (anomalous / high-score /
+# high-severity), then group seeds that are within INCIDENT_WINDOW_SECONDS of
+# each other in ABSOLUTE time. Gaps are measured between SEEDS (sparse), not all
+# logs, so continuous background noise can't bridge incidents and a real
+# incident stays a minutes-long burst. Groups with < INCIDENT_MIN_SEEDS seeds
+# are dropped, so isolated false-positive seeds on clean days form no incident.
+# Seeding: a row is a seed if it is anomalous OR carries a non-trivial label OR
+# is high severity. The real anomaly bursts (PROTOCOL_STARVATION, SPLIT_BRAIN)
+# are DENSE clusters of `medium` rows whose final_score sits below 0.5, so the
+# per-row score is NOT the discriminator — DENSITY is. Seed broadly on label,
+# then let INCIDENT_MIN_SEEDS reject scattered clean-day medium noise: a real
+# incident packs many seeds into one window; clean noise spreads ~1 per window.
+INCIDENT_WINDOW_SECONDS: int = 180      # consecutive seeds within this → same incident
+INCIDENT_MIN_SEEDS: int = 10            # density floor: fewer seeds in window → not an incident
+INCIDENT_SEED_LABELS: tuple = ("medium", "critical")  # labels that seed
+INCIDENT_SEED_SCORE_MIN: float = 0.50   # final_score at/above this also seeds
+INCIDENT_SEED_SEVERITY_MIN: float = 0.70  # event_weight at/above this (ERROR+) also seeds
 
-# Max time gap within a single incident. DBSCAN clusters on feature similarity
-# only, so temporally-distant but similar logs (routine medium lines spread
-# across a multi-day batch) collapse into one mega-incident spanning days. After
-# clustering we split each incident wherever consecutive logs are more than this
-# many seconds apart, then drop fragments smaller than DBSCAN_MIN_SAMPLES back to
-# noise — so incidents are bounded activity bursts, not 10-day blobs.
+# Legacy DBSCAN knobs — retained for backward-compat / fallback only.
+DBSCAN_EPS: float = 0.08
+DBSCAN_MIN_SAMPLES: int = 3
 INCIDENT_MAX_GAP_SECONDS: int = 900  # 15 minutes
 
 # Root cause candidates selected per incident cluster.
