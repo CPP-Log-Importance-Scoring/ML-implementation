@@ -1,0 +1,44 @@
+# =============================================================================
+# Dataset profile: generic / minimal starting template
+# =============================================================================
+# Copy this file and rename it for your dataset, e.g.:
+#   config/dataset_profiles/kubernetes.yaml
+#   config/dataset_profiles/cisco_ios.yaml
+#
+# Then fill in the entries below. See hpe_synthetic.yaml for a worked example.
+#
+# To activate, run:
+#   DATASET_PROFILE=config/dataset_profiles/your_dataset.yaml python pipeline.py ...
+# =============================================================================
+
+profile_name: generic
+
+# ---------------------------------------------------------------------------
+# Service aliases
+# ---------------------------------------------------------------------------
+# Map lowercase daemon/process names to canonical uppercase subsystem labels.
+#
+# Example entries (uncomment and adapt):
+#
+#   kubelet:        RUNTIME
+#   containerd:     RUNTIME
+#   auditd:         AUDIT
+#   journald:       SYSTEM
+#   sshd:           SYSTEM
+#   node_exporter:  MONITORING
+
+service_aliases: {}
+
+# ---------------------------------------------------------------------------
+# Noise services
+# ---------------------------------------------------------------------------
+# List process names whose logs are routine heartbeats with no anomaly signal.
+# They will be automatically mapped to the NOISE label.
+#
+# Example entries (uncomment and adapt):
+#
+#   - node_exporter
+#   - prometheus_agent
+#   - healthz
+
+noise_services: []
