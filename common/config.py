@@ -571,6 +571,26 @@ INCIDENT_SEED_LABELS: tuple = ("medium", "critical")  # labels that seed
 INCIDENT_SEED_SCORE_MIN: float = 0.50   # final_score at/above this also seeds
 INCIDENT_SEED_SEVERITY_MIN: float = 0.70  # event_weight at/above this (ERROR+) also seeds
 
+# --- Incident escalation gate -------------------------------------------------
+# Clustering (above) seeds broadly on `medium` density so it catches real bursts
+# that never cross a per-row score bar. The cost: a busy CLEAN day also packs
+# hundreds of `medium` rows into windows, so it forms a few medium incidents too
+# — and a "medium incident" then appears on every day, carrying no signal.
+#
+# The escalation gate adds a per-incident boolean (is_escalated) that separates a
+# genuine incident from clean-day medium noise WITHOUT touching recall or
+# clustering: every incident is still formed and stored, but only escalated ones
+# are surfaced/alerted by default. An incident escalates if it contains a real
+# severity signal — either a critical-LABELLED row (the system judged a line
+# anomalous enough to cross LABEL_MEDIUM_MAX) or a dense burst of high-SEVERITY
+# rows (the lines themselves are ERROR+). This is a ranking flag, not a filter:
+# nothing is dropped, so an under-tiered INFO anomaly still forms its incident —
+# it just won't be auto-surfaced unless it also packs high-severity rows.
+INCIDENT_ESCALATION_ENABLED: bool = True
+INCIDENT_ESCALATE_MIN_CRITICAL_ROWS: int = 1     # >= this many critical-LABEL rows → escalate
+INCIDENT_ESCALATE_HIGH_SEV_MIN: float = 0.70     # event_weight at/above this counts as high-severity
+INCIDENT_ESCALATE_HIGH_SEV_COUNT: int = 3        # >= this many high-severity rows → escalate
+
 # Legacy DBSCAN knobs — retained for backward-compat / fallback only.
 DBSCAN_EPS: float = 0.08
 DBSCAN_MIN_SAMPLES: int = 3

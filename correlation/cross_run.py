@@ -193,6 +193,36 @@ def _load_history() -> pd.DataFrame:
     return history
 
 
+def _incident_escalation(grp: pd.DataFrame) -> tuple[bool, str, int, int]:
+    """Decide whether one incident carries a genuine severity signal.
+
+    An incident escalates if EITHER:
+      * it contains >= INCIDENT_ESCALATE_MIN_CRITICAL_ROWS critical-LABELLED rows
+        (the scorer judged a line anomalous enough to cross LABEL_MEDIUM_MAX), OR
+      * it contains >= INCIDENT_ESCALATE_HIGH_SEV_COUNT rows whose event_weight is
+        >= INCIDENT_ESCALATE_HIGH_SEV_MIN (the lines themselves are ERROR+).
+
+    Returns (is_escalated, reason, n_critical_rows, n_high_severity_rows). When the
+    gate is disabled every incident is treated as escalated (reason="disabled").
+    """
+    n_critical = int((grp["label"] == "critical").sum()) if "label" in grp.columns else 0
+    if "event_weight" in grp.columns:
+        n_high_sev = int((grp["event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN).sum())
+    else:
+        n_high_sev = 0
+
+    if not cfg.INCIDENT_ESCALATION_ENABLED:
+        return True, "disabled", n_critical, n_high_sev
+
+    reasons = []
+    if n_critical >= cfg.INCIDENT_ESCALATE_MIN_CRITICAL_ROWS:
+        reasons.append("critical_row")
+    if n_high_sev >= cfg.INCIDENT_ESCALATE_HIGH_SEV_COUNT:
+        reasons.append("high_severity_density")
+
+    return bool(reasons), "+".join(reasons), n_critical, n_high_sev
+
+
 def _build_current_incidents(
     scored_df: pd.DataFrame,
     session_df: pd.DataFrame,
@@ -213,9 +243,11 @@ def _build_current_incidents(
     run_ts = datetime.now(tz=timezone.utc)
 
     # Join scored_df with session_df to get template_id, host, and timestamp per log
+    _sess_cols = ["sequence_number", "template_id", "host", "timestamp"]
+    if "event_weight" in session_df.columns:
+        _sess_cols.append("event_weight")
     scored_with_tmpl = scored_df.merge(
-        session_df[["sequence_number", "template_id", "host", "timestamp"]]
-        .drop_duplicates("sequence_number"),
+        session_df[_sess_cols].drop_duplicates("sequence_number"),
         on="sequence_number",
         how="left",
         suffixes=("", "_sess"),
@@ -264,6 +296,10 @@ def _build_current_incidents(
         labels = grp["label"].dropna().unique().tolist() if "label" in grp.columns else []
         severity = worst_label(labels)
 
+        # Escalation gate: does this incident carry a genuine severity signal,
+        # or is it clean-day medium noise? (Additive — does not change severity.)
+        is_escalated, escalation_reason, n_critical, n_high_sev = _incident_escalation(grp)
+
         incidents.append({
             "global_incident_id": global_id,
             "local_incident_id": local_id,
@@ -274,6 +310,10 @@ def _build_current_incidents(
             "template_fingerprint": fp,
             "root_cause_templates": rc_templates.get(local_id, []),
             "severity": severity,
+            "is_escalated": is_escalated,
+            "escalation_reason": escalation_reason,
+            "n_critical_rows": n_critical,
+            "n_high_severity_rows": n_high_sev,
             "log_count": len(grp),
             "hosts": hosts,
             "is_cross_system": bool(grp["is_cross_system"].any()) if "is_cross_system" in grp.columns else False,
@@ -410,6 +450,10 @@ def _append_current_to_history(
             "template_fingerprint":   fingerprint_to_json(inc["template_fingerprint"]),
             "root_cause_templates":   json.dumps(inc.get("root_cause_templates") or []),
             "severity":               inc.get("severity"),
+            "is_escalated":           inc.get("is_escalated", True),
+            "escalation_reason":      inc.get("escalation_reason", ""),
+            "n_critical_rows":        inc.get("n_critical_rows", 0),
+            "n_high_severity_rows":   inc.get("n_high_severity_rows", 0),
             "log_count":              inc.get("log_count"),
             "hosts":                  json.dumps(inc.get("hosts") or []),
             "is_cross_system":        inc.get("is_cross_system", False),
