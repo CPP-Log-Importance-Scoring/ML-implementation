@@ -213,7 +213,6 @@ def write_dataframe(
 def write_logs(df, conn=None):
     return write_dataframe(df, "logs", conn)
 
-
 def write_features(df, conn=None):
     return write_dataframe(df, "features", conn)
 

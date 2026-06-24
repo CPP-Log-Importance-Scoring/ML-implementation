@@ -158,6 +158,57 @@ class TestScenarioBreakdown:
         assert metrics["anomaly_tp"] == 2
 
 
+class TestIncidentLevelMetrics:
+    """Incident-level metrics over the default fixture.
+
+    The fixture's only incident is INC-0001 = rows 1-2, both labelled
+    'critical' and both CRITICAL-severity signal rows. With two critical-label
+    rows it escalates (INCIDENT_ESCALATE_MIN_CRITICAL_ROWS=1), and it contains
+    signal, so it is a true escalated incident.
+    """
+
+    def test_incident_counts(self, tmp_path):
+        metrics = _run(tmp_path, _write_fixtures(tmp_path))
+        assert metrics["n_incidents"] == 1
+        assert metrics["n_incidents_escalated"] == 1
+
+    def test_escalated_precision_and_signal_recall(self, tmp_path):
+        metrics = _run(tmp_path, _write_fixtures(tmp_path))
+        # The one escalated incident contains signal → precision 1.0
+        assert metrics["escalated_incident_precision"] == pytest.approx(1.0)
+        # 2 of the 3 signal rows (rows 1,2) sit inside the escalated incident
+        assert metrics["incident_signal_recall"] == pytest.approx(2 / 3)
+
+    def test_scenario_discrimination(self, tmp_path):
+        metrics = _run(tmp_path, _write_fixtures(tmp_path))
+        # The incident is in S1; S1 is the only truth-bearing scenario it fires
+        assert metrics["scenario_escalation_precision"] == pytest.approx(1.0)
+        assert metrics["scenario_escalation_recall"] == pytest.approx(1.0)
+        # S2 carries no signal → a "clean" scenario that did not fire
+        assert metrics["clean_scenarios_total"] == 1
+        assert metrics["clean_scenarios_fired"] == 0
+
+    def test_per_scenario_incident_counts(self, tmp_path):
+        metrics = _run(tmp_path, _write_fixtures(tmp_path))
+        by_id = {s["scenario_id"]: s for s in metrics["per_scenario"]}
+        assert by_id["S1"]["n_incidents"] == 1
+        assert by_id["S1"]["n_escalated"] == 1
+        assert by_id["S2"]["n_incidents"] == 0
+        assert by_id["S2"]["n_escalated"] == 0
+
+    def test_no_incidents_when_none_clustered(self, tmp_path):
+        # Strip correlation_id so no incidents form → vacuous-but-defined metrics.
+        paths = _write_fixtures(tmp_path)
+        scored = pd.read_parquet(paths["scored"])
+        scored["correlation_id"] = None
+        scored.to_parquet(paths["scored"], index=False)
+        metrics = _run(tmp_path, paths)
+        assert metrics["n_incidents"] == 0
+        assert metrics["n_incidents_escalated"] == 0
+        assert metrics["escalated_incident_precision"] == 0.0
+        assert metrics["incident_signal_recall"] == 0.0
+
+
 class TestReportFile:
     def test_report_written_and_readable(self, tmp_path):
         _run(tmp_path, _write_fixtures(tmp_path))

@@ -197,19 +197,32 @@ def _incident_escalation(grp: pd.DataFrame) -> tuple[bool, str, int, int]:
     """Decide whether one incident carries a genuine severity signal.
 
     An incident escalates if EITHER:
-      * it contains >= INCIDENT_ESCALATE_MIN_CRITICAL_ROWS critical-LABELLED rows
-        (the scorer judged a line anomalous enough to cross LABEL_MEDIUM_MAX), OR
+      * it contains >= INCIDENT_ESCALATE_MIN_CRITICAL_ROWS CREDIBLE critical rows
+        (critical LABEL *and* genuine severity), OR
       * it contains >= INCIDENT_ESCALATE_HIGH_SEV_COUNT rows whose event_weight is
         >= INCIDENT_ESCALATE_HIGH_SEV_MIN (the lines themselves are ERROR+).
+
+    The critical-LABEL path requires severity corroboration because the
+    unsupervised ML term can manufacture a 'critical' label on a perfectly benign
+    line: on clean days, routine peer_probe / fib_lookup rows crossed
+    LABEL_MEDIUM_MAX purely via combined_score and falsely escalated their
+    incidents (verified 2026-06-24). Requiring event_weight >= the high-sev
+    threshold means an ML-only artifact can no longer surface an incident, while a
+    genuine fault (OOM "Killed process", a fault-promoted onset) still does.
 
     Returns (is_escalated, reason, n_critical_rows, n_high_severity_rows). When the
     gate is disabled every incident is treated as escalated (reason="disabled").
     """
-    n_critical = int((grp["label"] == "critical").sum()) if "label" in grp.columns else 0
     if "event_weight" in grp.columns:
         n_high_sev = int((grp["event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN).sum())
+        # Credible critical = critical LABEL backed by genuine severity (not an
+        # ML-only artifact). Falls back to label-only when severity is unavailable.
+        n_critical = int(
+            ((grp["label"] == "critical") & (grp["event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN)).sum()
+        ) if "label" in grp.columns else 0
     else:
         n_high_sev = 0
+        n_critical = int((grp["label"] == "critical").sum()) if "label" in grp.columns else 0
 
     if not cfg.INCIDENT_ESCALATION_ENABLED:
         return True, "disabled", n_critical, n_high_sev
