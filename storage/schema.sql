@@ -206,6 +206,10 @@ CREATE TABLE IF NOT EXISTS incident_history (
     template_fingerprint     TEXT NOT NULL,
     root_cause_templates     TEXT,
     severity                 TEXT,
+    is_escalated             BOOLEAN DEFAULT TRUE,
+    escalation_reason        TEXT,
+    n_critical_rows          INT DEFAULT 0,
+    n_high_severity_rows     INT DEFAULT 0,
     log_count                INT,
     hosts                    TEXT,
     is_cross_system          BOOLEAN DEFAULT FALSE,
@@ -226,3 +230,11 @@ CREATE INDEX IF NOT EXISTS idx_incident_history_chain_id
     ON incident_history (chain_id);
 CREATE INDEX IF NOT EXISTS idx_incident_history_run_date
     ON incident_history (run_date);
+
+-- Incident escalation gate columns. Idempotent migration so existing databases
+-- (created before the gate) gain the columns on the next apply_schema, without a
+-- drop. CREATE TABLE IF NOT EXISTS alone never alters an existing table.
+ALTER TABLE incident_history ADD COLUMN IF NOT EXISTS is_escalated         BOOLEAN DEFAULT TRUE;
+ALTER TABLE incident_history ADD COLUMN IF NOT EXISTS escalation_reason    TEXT;
+ALTER TABLE incident_history ADD COLUMN IF NOT EXISTS n_critical_rows      INT DEFAULT 0;
+ALTER TABLE incident_history ADD COLUMN IF NOT EXISTS n_high_severity_rows INT DEFAULT 0;
