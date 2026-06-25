@@ -103,17 +103,38 @@ def cluster_incidents(scored_df: pd.DataFrame) -> pd.DataFrame:
     # can survive on EITHER floor (density or severity); see the keep mask below.
     work = df.loc[seed, ["timestamp"]].copy()
     work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
+    # Carry a stable content key (sequence_number, else the original index) so the
+    # temporal sort below has a DETERMINISTIC tie-breaker. Without it, seeds sharing
+    # a timestamp keep whatever order the upstream merge emitted, and that order can
+    # vary run-to-run — shifting incident boundaries on ties and making the incident
+    # count wobble (observed 52 vs 68 on identical input, 2026-06-25). The business
+    # key removes that dependence on upstream row order entirely.
+    work["_seq"] = (
+        df.loc[seed, "sequence_number"].to_numpy()
+        if "sequence_number" in df.columns else work.index.to_numpy()
+    )
     severity_path = cfg.INCIDENT_SEVERITY_FORMATION
     if severity_path:
-        work["_is_critical"] = (
-            (df.loc[seed, "label"] == "critical").to_numpy()
-            if "label" in df.columns else False
-        )
+        # _is_critical = a CREDIBLE critical row: critical LABEL backed by genuine
+        # severity (event_weight >= high-sev threshold), exactly as the escalation
+        # gate defines it (cross_run._incident_escalation). The unsupervised ML term
+        # can stamp 'critical' on a benign line; without the severity backing such a
+        # row would anchor its own severity-formed incident. Falls back to label-only
+        # when event_weight is unavailable (legacy callers / unit fixtures).
+        if "label" in df.columns and "event_weight" in df.columns:
+            work["_is_critical"] = (
+                (df.loc[seed, "label"] == "critical")
+                & (df.loc[seed, "event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN)
+            ).to_numpy()
+        elif "label" in df.columns:
+            work["_is_critical"] = (df.loc[seed, "label"] == "critical").to_numpy()
+        else:
+            work["_is_critical"] = False
         work["_is_high_sev"] = (
             (df.loc[seed, "event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN).to_numpy()
             if "event_weight" in df.columns else False
         )
-    work = work.dropna(subset=["timestamp"]).sort_values("timestamp")
+    work = work.dropna(subset=["timestamp"]).sort_values(["timestamp", "_seq"])
 
     gap = work["timestamp"].diff().dt.total_seconds()
     if severity_path:
@@ -139,11 +160,18 @@ def cluster_incidents(scored_df: pd.DataFrame) -> pd.DataFrame:
     #     rows). Lets a sparse severe incident form below the density floor.
     # Thresholds shared with the escalation gate, so a severity-formed incident is
     # exactly one that also surfaces (see common/config.py INCIDENT_SEVERITY_FORMATION).
-    keep = grp.map(grp.value_counts()) >= cfg.INCIDENT_MIN_SEEDS
+    group_size = grp.map(grp.value_counts())
+    keep = group_size >= cfg.INCIDENT_MIN_SEEDS
     if severity_path:
         by_grp = work.groupby(grp)
-        keep |= by_grp["_is_critical"].transform("sum") >= cfg.INCIDENT_ESCALATE_MIN_CRITICAL_ROWS
-        keep |= by_grp["_is_high_sev"].transform("sum") >= cfg.INCIDENT_ESCALATE_HIGH_SEV_COUNT
+        has_critical = by_grp["_is_critical"].transform("sum") >= cfg.INCIDENT_ESCALATE_MIN_CRITICAL_ROWS
+        has_high_sev = by_grp["_is_high_sev"].transform("sum") >= cfg.INCIDENT_ESCALATE_HIGH_SEV_COUNT
+        # An incident is a GROUP, never a lone line: the severity floor only forms an
+        # incident when the group also clears INCIDENT_MIN_SIZE rows. This is what
+        # stops an isolated critical/high-sev seed on a sparse day from becoming a
+        # one-row incident that then escalates (the single-log demo failure). Genuine
+        # cascades sit far above the floor, so recall on real severe bursts is intact.
+        keep |= (has_critical | has_high_sev) & (group_size >= cfg.INCIDENT_MIN_SIZE)
     grp = grp.where(keep, other=np.nan)
 
     # Renumber surviving groups chronologically → INC-NNNN.
