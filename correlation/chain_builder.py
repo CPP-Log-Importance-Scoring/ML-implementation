@@ -196,7 +196,7 @@ def assign_chains(
         chain_position = _max_chain_pos(history, chain_id) + 1
 
         logger.info(
-            "Incident %s → chain=%s, precursor=%s, "
+            "Incident %s -> chain=%s, precursor=%s, "
             "jaccard=%.3f, overlap=%.3f, position=%d",
             curr["global_incident_id"],
             chain_id,

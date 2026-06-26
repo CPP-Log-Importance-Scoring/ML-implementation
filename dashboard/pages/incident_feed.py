@@ -27,6 +27,22 @@ st.set_page_config(
 apply_theme()
 render_sidebar_nav()
 
+_FEED_FILTER_BK = "_backing_feed_filters"
+if _FEED_FILTER_BK not in st.session_state:
+    st.session_state[_FEED_FILTER_BK] = {
+        "host_filter":       [],
+        "severity_filter":   ["critical", "medium", "low"],
+        "cross_system_only": False,
+    }
+_fbk = st.session_state[_FEED_FILTER_BK]
+
+if "feed_host_filter" not in st.session_state:
+    st.session_state["feed_host_filter"] = list(_fbk["host_filter"])
+if "feed_severity_filter" not in st.session_state:
+    st.session_state["feed_severity_filter"] = list(_fbk["severity_filter"])
+if "feed_cross" not in st.session_state:
+    st.session_state["feed_cross"] = _fbk["cross_system_only"]
+
 with st.sidebar:
     st.markdown(
         "<div style=\"font-size:0.75rem; font-weight:700; text-transform:uppercase; "
@@ -36,8 +52,8 @@ with st.sidebar:
     start_dt, end_dt = render_time_window("feed")
     st.markdown("---")
     all_hosts = db.get_host_list()
-    host_filter = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
-    severity_filter = st.multiselect("Severity", options=["critical", "medium", "low", "ignore"], default=["critical", "medium", "low"], key="feed_severity_filter")
+    host_filter       = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
+    severity_filter   = st.multiselect("Severity", options=["critical", "medium", "low", "ignore"], default=["critical", "medium", "low"], key="feed_severity_filter")
     cross_system_only = st.toggle("Cross-system only", value=False, key="feed_cross")
     escalated_only = st.toggle(
         "Escalated only", value=True, key="feed_escalated",
@@ -46,6 +62,12 @@ with st.sidebar:
     )
     st.markdown("---")
     st.caption("Showing up to 200 most recent incidents.")
+
+    st.session_state[_FEED_FILTER_BK] = {
+        "host_filter":       host_filter,
+        "severity_filter":   severity_filter,
+        "cross_system_only": cross_system_only,
+    }
 
 with st.spinner("Loading incidents…"):
     incidents = db.get_incidents(
@@ -59,7 +81,7 @@ with st.spinner("Loading incidents…"):
     if len(host_filter) > 1:
         incidents = [i for i in incidents if i.get("host") in host_filter]
 
-st.markdown("<h1>📋 Incident Feed</h1>", unsafe_allow_html=True)
+st.markdown("<h1>Incident Feed</h1>", unsafe_allow_html=True)
 
 total          = len(incidents)
 critical_count = sum(1 for i in incidents if (i.get("label") or "").lower() == "critical")
@@ -85,7 +107,6 @@ st.markdown(
 if not incidents:
     st.markdown(
         "<div style=\"background:#f8fafc; border:1px dashed #cbd5e1; border-radius:12px; padding:3rem 2rem; text-align:center; margin-top:1rem;\">"
-        "<div style=\"font-size:2.5rem; margin-bottom:0.75rem;\">🔍</div>"
         "<div style=\"font-weight:600; color:#334155; font-size:1rem;\">No incidents found</div>"
         "<div style=\"color:#64748b; font-size:0.85rem; margin-top:0.4rem;\">Adjust your filters or run the scoring pipeline.</div>"
         "</div>",
@@ -172,14 +193,14 @@ for incident in incidents_sorted:
                 + cross_badge
                 + "</div>"
                 "<div style=\"font-family:IBM Plex Mono,monospace; font-size:0.78rem; color:#64748b;\">"
-                "&#9203; " + dur_str + " &nbsp;&middot;&nbsp; &#128203; " + f"{log_count:,}" + " events"
+                + dur_str + " &nbsp;&middot;&nbsp; " + f"{log_count:,}" + " events"
                 "</div>"
                 "</div>"
 
                 # Row 2: timestamp + host
                 "<div style=\"margin-top:6px; font-size:0.8rem; color:#475569; font-family:IBM Plex Mono,monospace;\">"
-                "&#128197; " + start_str + " &rarr; " + end_str
-                + " &nbsp;&middot;&nbsp; &#128187; Host: <span style=\"font-weight:600; color:#0f172a;\">" + str(host) + "</span>"
+                + start_str + " &rarr; " + end_str
+                + " &nbsp;&middot;&nbsp; Host: <span style=\"font-weight:600; color:#0f172a;\">" + str(host) + "</span>"
                 "</div>"
 
                 # Row 3: summary preview — content is already HTML-escaped above

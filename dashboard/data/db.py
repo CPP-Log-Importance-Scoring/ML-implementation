@@ -12,8 +12,10 @@ All functions:
 
 from __future__ import annotations
 
-import pandas as pd
+from pathlib import Path
 from datetime import datetime, timedelta
+
+import pandas as pd
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor, execute_values
 
@@ -23,6 +25,8 @@ from common.logger import get_logger
 logger = get_logger(__name__)
 
 _POOL = None
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROCESSED_DIR = _PROJECT_ROOT / "data" / "processed"
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +249,70 @@ def get_root_causes(correlation_id: str) -> pd.DataFrame:
     return _query_dataframe(query, (correlation_id,))
 
 
+def _read_parquet_frame(name: str) -> pd.DataFrame:
+    path = _PROCESSED_DIR / name
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(path)
+    except Exception as exc:
+        logger.warning("Failed to read %s: %s", path, exc)
+        return pd.DataFrame()
+
+
+def _coerce_timestamp(value: datetime | pd.Timestamp) -> pd.Timestamp:
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        return ts.tz_localize("UTC")
+    return ts.tz_convert("UTC")
+
+
+def _build_host_stats_from_parquet(start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+    logs_df = _read_parquet_frame("sessionized_logs.parquet")
+    if logs_df.empty:
+        return pd.DataFrame()
+
+    logs_df = logs_df.copy()
+    if "timestamp" in logs_df.columns:
+        logs_df["timestamp"] = pd.to_datetime(logs_df["timestamp"], utc=True, errors="coerce")
+        logs_df = logs_df[(logs_df["timestamp"] >= _coerce_timestamp(start_dt)) & (logs_df["timestamp"] <= _coerce_timestamp(end_dt))]
+    if logs_df.empty:
+        return pd.DataFrame()
+
+    scores_df = _read_parquet_frame("scored_logs_df.parquet")
+    anomalies_df = _read_parquet_frame("anomaly_df.parquet")
+
+    merged = logs_df[["sequence_number", "host", "timestamp"]].copy()
+    if not scores_df.empty and "sequence_number" in scores_df.columns:
+        score_cols = [c for c in ["sequence_number", "correlation_id", "label"] if c in scores_df.columns]
+        if score_cols:
+            merged = merged.merge(scores_df[score_cols].drop_duplicates(subset=["sequence_number"]), on="sequence_number", how="left")
+    if not anomalies_df.empty and "sequence_number" in anomalies_df.columns:
+        anomaly_cols = [c for c in ["sequence_number", "is_anomaly"] if c in anomalies_df.columns]
+        if anomaly_cols:
+            merged = merged.merge(anomalies_df[anomaly_cols].drop_duplicates(subset=["sequence_number"]), on="sequence_number", how="left")
+
+    if merged.empty:
+        return pd.DataFrame()
+
+    merged["is_anomaly"] = merged.get("is_anomaly", False).fillna(False).astype(bool)
+    merged["correlation_id"] = merged.get("correlation_id")
+    merged["label"] = merged.get("label")
+
+    grouped = (
+        merged.groupby("host", dropna=False)
+        .agg(
+            incident_count=("correlation_id", lambda s: int(s.dropna().nunique())),
+            critical_count=("label", lambda s: int((s.fillna("").astype(str).str.lower() == "critical").sum())),
+            anomaly_rate=("is_anomaly", lambda s: float(s.fillna(False).astype(bool).sum()) / len(s) if len(s) else 0.0),
+            last_incident_at=("timestamp", "max"),
+        )
+        .reset_index()
+    )
+    grouped = grouped.sort_values(["incident_count", "critical_count"], ascending=[False, False])
+    return grouped
+
+
 def get_host_stats(
     time_range_hours: int | None = 24,
     start_time: datetime | None = None,
@@ -272,7 +340,10 @@ def get_host_stats(
         GROUP BY l.host
         ORDER BY incident_count DESC, critical_count DESC
     """
-    return _query_dataframe(query, (start_dt, end_dt))
+    stats = _query_dataframe(query, (start_dt, end_dt))
+    if stats.empty:
+        stats = _build_host_stats_from_parquet(start_dt, end_dt)
+    return stats
 
 
 def get_host_list() -> list[str]:
@@ -298,6 +369,39 @@ def get_anomaly_count() -> int:
     return int(df.iloc[0]["count"])
 
 
+def _build_incident_count_by_hour_from_parquet(start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+    logs_df = _read_parquet_frame("sessionized_logs.parquet")
+    if logs_df.empty:
+        return pd.DataFrame()
+
+    logs_df = logs_df.copy()
+    if "timestamp" in logs_df.columns:
+        logs_df["timestamp"] = pd.to_datetime(logs_df["timestamp"], utc=True, errors="coerce")
+        logs_df = logs_df[(logs_df["timestamp"] >= _coerce_timestamp(start_dt)) & (logs_df["timestamp"] <= _coerce_timestamp(end_dt))]
+    if logs_df.empty:
+        return pd.DataFrame()
+
+    scores_df = _read_parquet_frame("scored_logs_df.parquet")
+    if scores_df.empty:
+        return pd.DataFrame(columns=["hour", "incident_count", "critical_count"])
+
+    merged = logs_df[["sequence_number", "timestamp"]].copy()
+    score_cols = [c for c in ["sequence_number", "correlation_id", "label"] if c in scores_df.columns]
+    if score_cols:
+        merged = merged.merge(scores_df[score_cols].drop_duplicates(subset=["sequence_number"]), on="sequence_number", how="left")
+
+    merged["hour"] = merged["timestamp"].dt.floor("h")
+    hourly = (
+        merged.groupby("hour", dropna=False)
+        .agg(
+            incident_count=("correlation_id", lambda s: int(s.dropna().nunique())),
+            critical_count=("label", lambda s: int((s.fillna("").astype(str).str.lower() == "critical").sum())),
+        )
+        .reset_index()
+    )
+    return hourly.sort_values("hour")
+
+
 def get_incident_count_by_hour(
     time_range_hours: int = 24,
     start_time: datetime | None = None,
@@ -317,7 +421,10 @@ def get_incident_count_by_hour(
         GROUP BY DATE_TRUNC('hour', l.timestamp)
         ORDER BY hour ASC
     """
-    return _query_dataframe(query, (start_dt, end_dt))
+    hourly = _query_dataframe(query, (start_dt, end_dt))
+    if hourly.empty:
+        hourly = _build_incident_count_by_hour_from_parquet(start_dt, end_dt)
+    return hourly
 
 
 # ---------------------------------------------------------------------------

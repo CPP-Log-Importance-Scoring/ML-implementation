@@ -55,23 +55,25 @@ hero_col, status_col = st.columns([2.2, 1], gap="large")
 with hero_col:
     st.markdown(
         """
-        <div style='background: linear-gradient(135deg, #0f172a 0%, #111827 45%, #1e293b 100%);
+        <div style='background: linear-gradient(135deg, #f8fbff 0%, #ffffff 55%, #eef6ff 100%);
                     padding: 2rem 2rem 1.4rem 2rem; border-radius: 18px; margin-bottom: 1.2rem;
-                    box-shadow: 0 10px 30px rgba(15,23,42,0.18); border: 1px solid rgba(148,163,184,0.18);'>
+                    box-shadow: 0 10px 30px rgba(15,23,42,0.08); border: 1px solid rgba(59,130,246,0.16);'>
           <div style='display:flex; align-items:center; gap:10px; margin-bottom:0.5rem;'>
-            <div style='font-size:1.8rem;'>⚡</div>
-            <span style='font-size:0.82rem; text-transform:uppercase; letter-spacing:0.18em; color:#cbd5e1;'>HPE CX Intelligence Hub</span>
+            <span style='font-size:0.82rem; text-transform:uppercase; letter-spacing:0.18em; color:#2563eb;'>HPE CX Intelligence Hub</span>
           </div>
-          <h1 style='font-size:2.15rem; font-weight:800; color:#ffffff !important; margin:0 0 0.35rem 0; letter-spacing:-0.03em;'>
-            Start from a clear incident view, not a noisy log dump.
+          <h1 style='font-size:2.15rem; font-weight:800; color:#0f172a !important; margin:0 0 0.35rem 0; letter-spacing:-0.03em;'>
+            Turn noisy network telemetry into clear incident stories.
           </h1>
-          <p style='color:#cbd5e1; font-size:1rem; line-height:1.55; max-width:760px; margin:0 0 0.8rem 0;'>
-            Monitor incidents, inspect root causes, and move from signal to response with one unified operations dashboard.
+          <p style='color:#334155; font-size:1rem; line-height:1.6; max-width:760px; margin:0 0 0.8rem 0;'>
+            This software helps operations teams spot anomalies, inspect correlated events, and understand which hosts need attention first.
+          </p>
+          <p style='color:#475569; font-size:0.95rem; line-height:1.55; max-width:760px; margin:0 0 0.8rem 0;'>
+            Start with the incident feed, drill into host health, or search logs directly to move from signal to response with confidence.
           </p>
           <div style='display:flex; flex-wrap:wrap; gap:0.45rem;'>
-            <span style='background:rgba(59,130,246,0.14); color:#bfdbfe; border:1px solid rgba(147,197,253,0.25); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Anomaly detection</span>
-            <span style='background:rgba(34,197,94,0.12); color:#bbf7d0; border:1px solid rgba(134,239,172,0.25); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Root-cause clues</span>
-            <span style='background:rgba(251,191,36,0.12); color:#fde68a; border:1px solid rgba(253,224,71,0.25); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Live observability</span>
+            <span style='background:rgba(59,130,246,0.12); color:#1d4ed8; border:1px solid rgba(59,130,246,0.2); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Anomaly detection</span>
+            <span style='background:rgba(34,197,94,0.12); color:#15803d; border:1px solid rgba(34,197,94,0.2); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Root-cause clues</span>
+            <span style='background:rgba(251,191,36,0.12); color:#b45309; border:1px solid rgba(251,191,36,0.2); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Live observability</span>
           </div>
         </div>
         """,
@@ -100,7 +102,6 @@ with col1:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">📋</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Feed</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Real-time incident view with severity, host, and cross-system correlation filters.
@@ -118,7 +119,6 @@ with col2:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">🔍</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Detail</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Force-directed correlation graphs, interactive timelines, and cached AI summaries.
@@ -136,7 +136,6 @@ with col3:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">🖥️</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Host Health</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Per-host statistics, incident counts, anomaly rate visualizations, and trend graphs.
@@ -154,7 +153,6 @@ with col4:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">🔎</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Log Search</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Full-text search indexed via Elasticsearch with filters and CSV export capabilities.
@@ -173,7 +171,6 @@ with col5:
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;
                   border: 1px solid rgba(59,130,246,0.35); background: rgba(59,130,246,0.04);">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">📤</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Upload & Analyze</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Drag in .log files, trigger the full pipeline, watch live progress, and view a result summary.
@@ -187,4 +184,4 @@ with col5:
         st.switch_page("pages/upload_logs.py")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
-st.info("👈 Use the sidebar navigation or click any buttons above to explore.", icon="ℹ️")
+st.info("Use the sidebar navigation or click any buttons above to explore.")

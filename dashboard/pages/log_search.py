@@ -73,7 +73,7 @@ with st.sidebar:
     )
 
 # ── Page header ────────────────────────────────────────────────────────────
-st.markdown("<h1>🔎 Log Search & Discovery</h1>", unsafe_allow_html=True)
+st.markdown("<h1>Log Search & Discovery</h1>", unsafe_allow_html=True)
 
 # ── ES Offline Banner ───────────────────────────────────────────────────────
 if not es_ok:
@@ -81,7 +81,7 @@ if not es_ok:
         """
         <div style='background:#fef2f2; border:1px solid #fee2e2; border-radius:12px;
                     padding:1.5rem; margin-bottom:1.5rem; color:#991b1b;'>
-          <div style='font-size:1.15rem; font-weight:700; margin-bottom:0.4rem;'>⚠️ Elasticsearch is Unavailable</div>
+          <div style='font-size:1.15rem; font-weight:700; margin-bottom:0.4rem;'>Elasticsearch is Unavailable</div>
           <div style='font-size:0.83rem; line-height:1.5; color:#7f1d1d;'>
             The log search capability is disabled because the Elasticsearch cluster is unreachable. 
             To activate text search, please run the following command in your terminal:<br>
@@ -134,7 +134,6 @@ if searched:
             f"""
             <div style='background:#fef9ec; border:1px solid #fde68a; border-radius:10px;
                         padding:1.5rem; text-align:center; margin-top:1rem;'>
-              <div style='font-size:1.5rem; margin-bottom:0.5rem;'>🔍</div>
               <div style='font-weight:600; color:#92400e; font-size:0.95rem;'>No results found</div>
               <div style='font-size:0.83rem; color:#b45309; margin-top:4px;'>
                 No logs matched "<b>{query}</b>" in the last {time_range}h.
@@ -208,7 +207,7 @@ if searched:
 
         with action_col1:
             st.download_button(
-                "⬇️ Export Results to CSV",
+                "Export Results to CSV",
                 data=df[display_cols].to_csv(index=False),
                 file_name=f"log_search_{query[:30].replace(' ','_')}.csv",
                 mime="text/csv",
@@ -259,7 +258,7 @@ if not searched and not query:
         <div style='background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;
                     padding:1.5rem 2rem; margin-top:1rem;'>
           <div style='font-weight:600; color:#334155; margin-bottom:0.6rem; font-size:0.9rem;'>
-            💡 Search Tips & syntax
+            Search Tips & syntax
           </div>
           <ul style='color:#64748b; font-size:0.83rem; line-height:1.8; margin:0; padding-left:1.2rem;'>
             <li>Search by failure type: <code>OSPF neighbor</code>, <code>BGP session dropped</code></li>
