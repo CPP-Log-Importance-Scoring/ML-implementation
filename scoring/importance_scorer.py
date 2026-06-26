@@ -224,7 +224,26 @@ def apply_message_adjustments(df: pd.DataFrame) -> pd.DataFrame:
         lower=cfg.ONSET_SCORE_FLOOR
     )
 
-    # (3) severity credibility gate — strip the severity-term bonus from lines
+    # (3) severity fault promotion — the inverse of the credibility gate below.
+    #     A line whose CONTENT carries an unambiguous fault indicator but was
+    #     UNDER-tagged (e.g. a STARVATION/SPLIT_BRAIN burst parsed INFO) is
+    #     promoted to a credible high severity so it seeds clustering and counts
+    #     toward escalation. final_score is lifted by the same severity delta so
+    #     the row clears 'ignore' and is allowed to seed. See common/config.py.
+    fault = pd.Series(False, index=df.index)
+    n_promoted = 0
+    if cfg.SEVERITY_FAULT_PROMOTION_ENABLED and "event_weight" in df.columns:
+        for pat in cfg.SEVERITY_FAULT_PATTERNS:
+            fault |= msg.str.contains(pat, case=False, regex=True, na=False)
+        promote_mask = fault & (df["event_weight"] < cfg.SEVERITY_FAULT_PROMOTE_WEIGHT)
+        delta = cfg.SCORING_SEVERITY_WEIGHT * (
+            cfg.SEVERITY_FAULT_PROMOTE_WEIGHT - df.loc[promote_mask, "event_weight"]
+        )
+        df.loc[promote_mask, "final_score"] = df.loc[promote_mask, "final_score"] + delta
+        df.loc[promote_mask, "event_weight"] = cfg.SEVERITY_FAULT_PROMOTE_WEIGHT
+        n_promoted = int(promote_mask.sum())
+
+    # (4) severity credibility gate — strip the severity-term bonus from lines
     #     whose message asserts normal operation but whose log_level tag was
     #     inflated (e.g. "...- NORMAL" carried at severity=CRITICAL). score()
     #     baked SCORING_SEVERITY_WEIGHT * event_weight into final_score; here we
@@ -236,20 +255,33 @@ def apply_message_adjustments(df: pd.DataFrame) -> pd.DataFrame:
         benign = pd.Series(False, index=df.index)
         for pat in cfg.SEVERITY_GATE_BENIGN_PATTERNS:
             benign |= msg.str.contains(pat, case=False, regex=True, na=False)
-        # Only act where the tag actually inflated the score above INFO, and
-        # never gate a genuine onset marker we just floored.
-        gate_mask = benign & (df["event_weight"] > cfg.DEFAULT_SEVERITY_WEIGHT) & (~onset)
+        # Only act where the tag actually inflated the score above INFO, never
+        # gate a genuine onset marker we just floored, and never demote a line we
+        # just promoted on fault content (fault evidence wins over normalcy words).
+        gate_mask = benign & (df["event_weight"] > cfg.DEFAULT_SEVERITY_WEIGHT) & (~onset) & (~fault)
         excess = cfg.SCORING_SEVERITY_WEIGHT * (
             df.loc[gate_mask, "event_weight"] - cfg.DEFAULT_SEVERITY_WEIGHT
         )
         df.loc[gate_mask, "final_score"] = df.loc[gate_mask, "final_score"] - excess
+        # Neutralise the credibility-failed severity itself, not just its
+        # final_score contribution. event_weight is read again downstream by
+        # incident seeding/formation and the escalation gate; left at its inflated
+        # value, a line the gate just judged non-credible ("ASIC temperature: 50C
+        # - NORMAL" tagged CRITICAL) still counts as a high-severity row there and
+        # manufactures incidents/escalations from benign status spam (measured
+        # 2026-06-24: 3 sim_real incidents escalated purely on benign-tagged rows).
+        # Reverting it to the INFO baseline keeps one credibility-adjusted severity
+        # for every consumer. Done after the excess subtraction above so that
+        # correction still uses the original weight.
+        df.loc[gate_mask, "event_weight"] = cfg.DEFAULT_SEVERITY_WEIGHT
         n_gated = int(gate_mask.sum())
 
     df["final_score"] = df["final_score"].clip(0.0, 1.0)
     logger.info(
         "Message adjustments: damped %d recovery/all-clear lines, "
-        "floored %d onset markers, severity-gated %d benign-tag lines",
-        int(recovery.sum()), int(onset.sum()), n_gated,
+        "floored %d onset markers, promoted %d fault-content lines, "
+        "severity-gated %d benign-tag lines",
+        int(recovery.sum()), int(onset.sum()), n_promoted, n_gated,
     )
     return df
 

@@ -55,6 +55,11 @@ with st.sidebar:
     host_filter       = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
     severity_filter   = st.multiselect("Severity", options=["critical", "medium", "low", "ignore"], default=["critical", "medium", "low"], key="feed_severity_filter")
     cross_system_only = st.toggle("Cross-system only", value=False, key="feed_cross")
+    escalated_only = st.toggle(
+        "Escalated only", value=True, key="feed_escalated",
+        help="Show only incidents carrying a real severity signal (a critical-label "
+             "row or a burst of high-severity rows). Hides clean-day medium noise.",
+    )
     st.markdown("---")
     st.caption("Showing up to 200 most recent incidents.")
 
@@ -71,6 +76,7 @@ with st.spinner("Loading incidents…"):
         start_time=start_dt,
         end_time=end_dt,
         cross_system_only=cross_system_only,
+        escalated_only=escalated_only,
     )
     if len(host_filter) > 1:
         incidents = [i for i in incidents if i.get("host") in host_filter]
@@ -80,6 +86,7 @@ st.markdown("<h1>Incident Feed</h1>", unsafe_allow_html=True)
 total          = len(incidents)
 critical_count = sum(1 for i in incidents if (i.get("label") or "").lower() == "critical")
 cross_count    = sum(1 for i in incidents if i.get("is_cross_system"))
+escalated_count = sum(1 for i in incidents if i.get("is_escalated"))
 affected_hosts: dict[str, int] = {}
 for inc in incidents:
     h = inc.get("host", "")
@@ -91,6 +98,7 @@ st.markdown(
     + "<div class=\"kpi-card\" style=\"flex:1; min-width:200px;\"><div class=\"kpi-title\">Total Incidents</div><div class=\"kpi-value\">" + str(total) + "</div></div>"
     + "<div class=\"kpi-card\" style=\"flex:1; min-width:200px;\"><div class=\"kpi-title\" style=\"color:#dc2626;\">Critical Incidents</div><div class=\"kpi-value\" style=\"color:#dc2626;\">" + str(critical_count) + "</div></div>"
     + "<div class=\"kpi-card\" style=\"flex:1; min-width:200px;\"><div class=\"kpi-title\">Cross-System</div><div class=\"kpi-value\">" + str(cross_count) + "</div></div>"
+    + "<div class=\"kpi-card\" style=\"flex:1; min-width:200px;\"><div class=\"kpi-title\" style=\"color:#b45309;\">Escalated</div><div class=\"kpi-value\" style=\"color:#b45309;\">" + str(escalated_count) + "</div></div>"
     + "<div class=\"kpi-card\" style=\"flex:1; min-width:200px;\"><div class=\"kpi-title\">Most Affected Host</div><div class=\"kpi-value\" style=\"font-size:1.25rem; font-weight:700; padding-top:6px;\">" + str(most_affected) + "</div></div>"
     + "</div>",
     unsafe_allow_html=True,
@@ -126,6 +134,8 @@ for incident in incidents_sorted:
     log_count  = incident.get("log_count", 0)
     duration   = incident.get("duration", 0)
     is_cross   = incident.get("is_cross_system", False)
+    is_escalated = incident.get("is_escalated", True)
+    esc_reason = (incident.get("escalation_reason") or "").replace("_", " ")
     final_score = float(incident.get("final_score") or 0.0)
     rc_conf    = float(incident.get("root_cause_confidence") or 0.0)
 
@@ -159,6 +169,11 @@ for incident in incidents_sorted:
 
     border_color = {"critical": "#DC2626", "medium": "#F59E0B", "low": "#22C55E", "ignore": "#94A3B8"}.get(label, "#94A3B8")
     cross_badge  = "<span style=\"background:#fef3c7; color:#92400e; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; margin-left:6px;\">⚠ CROSS-SYS</span>" if is_cross else ""
+    if is_escalated:
+        _esc_title = (" title=\"" + esc_reason + "\"") if esc_reason else ""
+        esc_badge = "<span" + _esc_title + " style=\"background:#fee2e2; color:#991b1b; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; margin-left:6px;\">🔺 ESCALATED</span>"
+    else:
+        esc_badge = "<span style=\"background:#f1f5f9; color:#64748b; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; margin-left:6px;\">INFORMATIONAL</span>"
 
     with st.container():
         col_card, col_btn = st.columns([8.5, 1.5], vertical_alignment="top")
@@ -174,6 +189,7 @@ for incident in incidents_sorted:
                 "<div style=\"display:flex; align-items:center; gap:8px; flex-wrap:wrap;\">"
                 + severity_badge(label)
                 + "<span style=\"font-family:IBM Plex Mono,monospace; font-weight:700; font-size:0.95rem; color:#0f172a;\">" + str(cid) + "</span>"
+                + esc_badge
                 + cross_badge
                 + "</div>"
                 "<div style=\"font-family:IBM Plex Mono,monospace; font-size:0.78rem; color:#64748b;\">"

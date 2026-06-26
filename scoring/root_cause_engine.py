@@ -70,9 +70,41 @@ def identify_root_causes(
 
     root_cause_rows: list[dict] = []
 
+    # ------------------------------------------------------------------
+    # Ranking signal: specificity-weighted importance.
+    # ------------------------------------------------------------------
+    # Plain centrality ranks the most-CONNECTED template first, which on real
+    # logs is a ubiquitous heartbeat/poll/keepalive — so root cause lands on
+    # benign high-frequency noise, not the fault (verified 2026-06-24: every
+    # row signal — centrality, final_score, event_weight, is_anomaly — failed to
+    # separate the fault line from routine chatter inside a medium incident).
+    # The differentiator is TEMPLATE SPECIFICITY: the fault template
+    # (MTU_MISMATCH, heap_growth, "memory at 98%") is rare/incident-specific
+    # while keepalive/poll are everywhere. We weight final_score by an IDF over
+    # the whole run — log(N / count(template)) — so a routine template's huge
+    # count drives its weight toward zero and a distinctive fault line wins.
+    # Computed from the data, no dataset-specific word list. Falls back to
+    # centrality when template_id is absent (legacy callers / unit fixtures), so
+    # the contract for those paths is unchanged.
+    if "template_id" in df.columns and "final_score" in df.columns:
+        n_total = len(df)
+        template_counts = df["template_id"].map(df["template_id"].value_counts())
+        idf = np.log(n_total / template_counts.clip(lower=1))
+        df["_rc_rank"] = df["final_score"] * idf
+        _rank_label = "specificity"
+    elif "centrality_score" in df.columns:
+        df["_rc_rank"] = df["centrality_score"]
+        _rank_label = "centrality"
+    else:
+        df["_rc_rank"] = df.get("final_score", 0.0)
+        _rank_label = "final_score"
+
     # Step 2 — process each incident
     valid_incidents = df["incident_id"].dropna().unique()
-    logger.info("Processing %d incidents for root cause identification", len(valid_incidents))
+    logger.info(
+        "Processing %d incidents for root cause identification (ranking by %s)",
+        len(valid_incidents), _rank_label,
+    )
 
     for incident_id in valid_incidents:
         cluster_rows = df[df["incident_id"] == incident_id]
@@ -89,13 +121,20 @@ def identify_root_causes(
                 incident_id, len(cluster_rows),
             )
 
-        # Ranking: centrality descending, capped at ROOT_CAUSE_TOP_N
-        candidates_sorted = candidates.sort_values("centrality_score", ascending=False)
+        # Ranking: specificity-weighted importance descending, onset (earliest
+        # timestamp) as the tiebreaker so a cause outranks an equally-ranked
+        # later effect. Capped at ROOT_CAUSE_TOP_N.
+        sort_cols = ["_rc_rank"]
+        sort_asc = [False]
+        if "timestamp" in candidates.columns:
+            sort_cols.append("timestamp")
+            sort_asc.append(True)
+        candidates_sorted = candidates.sort_values(sort_cols, ascending=sort_asc)
         top_candidates = candidates_sorted.head(cfg.ROOT_CAUSE_TOP_N)
 
-        # Confidence
-        max_centrality = float(candidates["centrality_score"].max())
-        if max_centrality == 0.0:
+        # Confidence: row rank relative to the strongest candidate in the incident.
+        max_rank = float(candidates["_rc_rank"].max())
+        if max_rank <= 0.0:
             confidence_per_candidate = 1.0 / len(candidates)
             logger.warning(
                 "Incident %s: max_centrality=0.0, distributing equal confidence "
@@ -105,7 +144,7 @@ def identify_root_causes(
             confidences = {idx: confidence_per_candidate for idx in top_candidates.index}
         else:
             confidences = {
-                idx: float(row["centrality_score"]) / max_centrality
+                idx: float(row["_rc_rank"]) / max_rank
                 for idx, row in top_candidates.iterrows()
             }
 
@@ -141,6 +180,10 @@ def identify_root_causes(
     # Audit flags from the scorer: True where the row's upstream score was
     # mean-filled rather than computed (absent on legacy callers).
     _output_cols += [c for c in ("anomaly_missing", "graph_missing") if c in df.columns]
+    # Persist the credibility-adjusted event_weight so the escalation gate (in
+    # cross_run, which reloads from this parquet) reads the SAME severity the
+    # clustering stage used — not the raw inflated tag from sessionized_logs.
+    _output_cols += [c for c in ("event_weight",) if c in df.columns]
     scored_logs_df = df[_output_cols].copy()
     scored_logs_df = scored_logs_df.rename(columns={"incident_id": "correlation_id"})
 
@@ -178,7 +221,8 @@ def identify_root_causes(
 
     # Step 5 — rename internal incident_id back to correlation_id before returning
     # so callers can filter on correlation_id (the canonical AGENTS.md column name).
-    df = df.rename(columns={"incident_id": "correlation_id"})
+    # Drop the transient ranking column so it never leaks downstream.
+    df = df.drop(columns=["_rc_rank"]).rename(columns={"incident_id": "correlation_id"})
 
     return df, root_causes_df
 

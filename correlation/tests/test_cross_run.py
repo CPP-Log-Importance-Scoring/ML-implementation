@@ -328,3 +328,68 @@ class TestPrecursorElevator:
         result = elevate_log_scores(scored, {"INC-0000"}, chain_confidence=0.0, boost=0.15)
         # chain_confidence=0.0 → no elevation
         assert result.loc[0, "final_score"] == pytest.approx(0.3)
+
+
+# ---------------------------------------------------------------------------
+# Incident escalation gate
+# ---------------------------------------------------------------------------
+
+class TestIncidentEscalation:
+    """The escalation gate separates genuine incidents from clean-day medium noise.
+
+    It is additive (never changes severity or drops an incident) and generalises:
+    an incident escalates only if it carries a real severity signal — a CREDIBLE
+    critical row (critical LABEL backed by genuine severity), or a dense burst of
+    high-SEVERITY (ERROR+) rows.
+    """
+
+    def _grp(self, labels, weights):
+        return pd.DataFrame({"label": labels, "event_weight": weights})
+
+    def test_credible_critical_row_escalates(self):
+        from correlation.cross_run import _incident_escalation
+        # critical LABEL backed by genuine high severity → escalates.
+        grp = self._grp(["medium", "medium", "critical"], [0.1, 0.1, 1.0])
+        esc, reason, n_crit, n_hs = _incident_escalation(grp)
+        assert esc and "critical_row" in reason
+        assert n_crit == 1
+
+    def test_uncorroborated_critical_label_does_not_escalate(self):
+        from correlation.cross_run import _incident_escalation
+        # critical LABEL with only baseline severity = an ML-only artifact (the
+        # clean-day false-escalation case: a benign peer_probe/fib_lookup row the
+        # unsupervised term pushed over LABEL_MEDIUM_MAX). Must NOT escalate.
+        grp = self._grp(["medium", "medium", "critical"], [0.1, 0.1, 0.1])
+        esc, reason, n_crit, n_hs = _incident_escalation(grp)
+        assert not esc and reason == ""
+        assert n_crit == 0
+
+    def test_high_severity_density_escalates(self):
+        from correlation.cross_run import _incident_escalation
+        # No critical label, but 3 ERROR+ lines (>= HIGH_SEV_COUNT default 3).
+        grp = self._grp(["medium"] * 5, [0.9, 0.8, 0.7, 0.1, 0.1])
+        esc, reason, n_crit, n_hs = _incident_escalation(grp)
+        assert esc and "high_severity_density" in reason
+        assert n_crit == 0 and n_hs == 3
+
+    def test_clean_medium_noise_does_not_escalate(self):
+        from correlation.cross_run import _incident_escalation
+        # The clean-day case: all medium, at most a stray high-severity line.
+        grp = self._grp(["medium"] * 10, [0.7] + [0.1] * 9)
+        esc, reason, n_crit, n_hs = _incident_escalation(grp)
+        assert not esc and reason == ""
+        assert n_crit == 0 and n_hs == 1
+
+    def test_disabled_gate_escalates_everything(self, monkeypatch):
+        import common.config as cfg
+        from correlation.cross_run import _incident_escalation
+        monkeypatch.setattr(cfg, "INCIDENT_ESCALATION_ENABLED", False)
+        grp = self._grp(["low", "medium"], [0.1, 0.1])
+        esc, reason, _, _ = _incident_escalation(grp)
+        assert esc and reason == "disabled"
+
+    def test_missing_event_weight_column_is_safe(self):
+        from correlation.cross_run import _incident_escalation
+        grp = pd.DataFrame({"label": ["medium", "critical"]})
+        esc, reason, n_crit, n_hs = _incident_escalation(grp)
+        assert esc and n_hs == 0  # critical_row still fires; no weight col → 0 high-sev

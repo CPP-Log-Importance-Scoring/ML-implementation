@@ -117,12 +117,19 @@ def get_incidents(
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     cross_system_only: bool = False,
+    escalated_only: bool = False,
 ) -> list[dict]:
     """
     Returns incidents as a list of dicts:
         correlation_id, host, start_time, end_time,
         log_count, label, is_cross_system, duration,
-        final_score, root_cause_confidence
+        final_score, root_cause_confidence,
+        is_escalated, escalation_reason, n_critical_rows, n_high_severity_rows
+
+    Escalation comes from incident_history via a fail-open LEFT JOIN: an incident
+    with no history row (or a DB predating the column) defaults to escalated=TRUE,
+    so nothing is ever wrongly hidden. escalated_only=True hides clean-day medium
+    noise (incidents carrying no critical-label or high-severity-density signal).
     """
     start_dt, end_dt = _resolve_time_window(time_range_hours, start_time, end_time)
 
@@ -137,10 +144,15 @@ def get_incidents(
         "  i.root_cause_confidence AS root_cause_confidence,",
         "  MAX(s.final_score) AS final_score,",
         "  COUNT(DISTINCT l.host) > 1 AS is_cross_system,",
-        "  EXTRACT(EPOCH FROM (i.end_time - i.start_time))::int AS duration",
+        "  EXTRACT(EPOCH FROM (i.end_time - i.start_time))::int AS duration,",
+        "  BOOL_OR(COALESCE(ih.is_escalated, TRUE)) AS is_escalated,",
+        "  MAX(ih.escalation_reason) AS escalation_reason,",
+        "  MAX(ih.n_critical_rows) AS n_critical_rows,",
+        "  MAX(ih.n_high_severity_rows) AS n_high_severity_rows",
         "FROM incidents i",
         "JOIN scores s ON s.correlation_id = i.incident_id",
         "JOIN logs l ON l.sequence_number = s.sequence_number AND l.run_id = s.run_id",
+        "LEFT JOIN incident_history ih ON ih.incident_id = i.incident_id",
         "WHERE i.start_time >= %s",
         "  AND i.start_time <= %s",
     ]
@@ -165,8 +177,13 @@ def get_incidents(
 
     query_parts.append("GROUP BY i.incident_id, i.start_time, i.end_time, i.log_count, i.label, i.root_cause_confidence")
 
+    having_clauses = []
     if cross_system_only:
-        query_parts.append("HAVING COUNT(DISTINCT l.host) > 1")
+        having_clauses.append("COUNT(DISTINCT l.host) > 1")
+    if escalated_only:
+        having_clauses.append("BOOL_OR(COALESCE(ih.is_escalated, TRUE)) = TRUE")
+    if having_clauses:
+        query_parts.append("HAVING " + " AND ".join(having_clauses))
 
     query_parts.append("ORDER BY start_time DESC")
     query_parts.append("LIMIT 200")
