@@ -22,6 +22,8 @@ AGENTS.md
 
 test_summary.py
 
+evaluation/results/oracle_report.txt
+
 # Model artifacts (regenerable). Whole dir, recursively — the old
 # ml/model_store/*.pkl globs were non-recursive and missed _archive/**,
 # which let ~70 model binaries leak into `git add -A`.

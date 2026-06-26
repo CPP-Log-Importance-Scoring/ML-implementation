@@ -52,7 +52,7 @@ with col_back:
     if st.button("← Feed", key="back_to_feed", use_container_width=True):
         st.switch_page("pages/incident_feed.py")
 with col_title:
-    st.markdown("<h1 style='margin-top:0;'>🔍 Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top:0;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
 
 # ── Guard: need a selected incident ─────────────────────────────────────────
 cid = st.session_state.get("selected_incident")
@@ -66,7 +66,6 @@ if not cid:
             """
             <div style='background:#f8fafc; border:1px dashed #cbd5e1; border-radius:12px;
                         padding:3rem 2rem; text-align:center; margin-top:2rem;'>
-              <div style='font-size:2.5rem; margin-bottom:0.75rem;'>🔍</div>
               <div style='font-weight:600; color:#334155; font-size:1rem;'>No incidents found in database</div>
               <div style='color:#64748b; font-size:0.85rem; margin-top:0.4rem;'>
                 Run the scoring pipeline to ingest log data.
@@ -137,7 +136,7 @@ st.markdown(
     f"<span style='font-size:0.85rem; color:#475569;'><b>Hosts:</b> {host_val}</span>"
     f"<span style='color:#cbd5e1;'>|</span>"
     f"<span style='font-size:0.8rem; color:#64748b; font-family:\"IBM Plex Mono\",monospace;'>"
-    f"📅 {start_val} → {end_val}</span>"
+    f"{start_val} → {end_val}</span>"
     f"<span style='color:#cbd5e1;'>|</span>"
     f"<span style='font-size:0.8rem; color:#64748b;'><b>Volume:</b> {log_count:,} logs</span>"
     f"{cross_tag}"
@@ -170,13 +169,15 @@ col_graph, col_timeline, col_summary = st.columns([2.5, 3.5, 2.5])
 # ── LEFT: Correlation Graph & Root Cause details ──────────────────────────
 with col_graph:
     st.markdown(
-        "<h3 style='margin-bottom:0.4rem; display:flex; align-items:center; gap:6px;'>🕸️ Correlation Graph</h3>",
+        "<h3 style='margin-bottom:0.4rem;'>Correlation Graph</h3>",
         unsafe_allow_html=True,
     )
     st.markdown(
         "<div style='font-size:0.73rem; color:#64748b; margin-bottom:8px; "
         "font-family:\"IBM Plex Mono\",monospace; display:flex; gap:12px;'>"
-        "<span>🔴 Root cause</span><span>🟡 Anomalous</span><span>🔵 Normal</span>"
+        "<span style='display:inline-flex;align-items:center;gap:4px;'><span style='display:inline-block;width:9px;height:9px;border-radius:2px;background:#b91c1c;'></span> Root cause</span>"
+        "<span style='display:inline-flex;align-items:center;gap:4px;'><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#f59e0b;'></span> Anomalous</span>"
+        "<span style='display:inline-flex;align-items:center;gap:4px;'><span style='display:inline-block;width:9px;height:9px;border-radius:50%;background:#1d4ed8;'></span> Normal</span>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -194,7 +195,7 @@ with col_graph:
         max_nodes=20 if max_nodes else 60,
     )
 
-    st.markdown("<h3>🎯 Core Root Cause Event</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>Core Root Cause Event</h3>", unsafe_allow_html=True)
     if not root_causes.empty:
         best_rc = root_causes.iloc[0]
         rc_conf = float(best_rc.get("confidence_score", 0))
@@ -229,7 +230,7 @@ with col_graph:
 # ── CENTRE: Event Timeline, Event Flow, and Log Inspector ─────────────────
 with col_timeline:
     st.markdown(
-        "<h3 style='margin-bottom:0.4rem;'>⏱️ Event Timeline</h3>",
+        "<h3 style='margin-bottom:0.4rem;'>Event Timeline</h3>",
         unsafe_allow_html=True,
     )
     render_timeline(incident_logs)
@@ -239,7 +240,7 @@ with col_timeline:
     # call. Streamlit sandboxes each markdown block independently, so a CSS
     # class injected in block A is never visible to block B. All styling is
     # now fully inline so no stylesheet dependency exists at all.
-    st.markdown("<h3>🔄 Incident Event Flow Pathway</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>Incident Event Flow Pathway</h3>", unsafe_allow_html=True)
 
     if not incident_logs.empty and "template_id" in incident_logs.columns:
         sorted_flow = incident_logs.sort_values("timestamp")
@@ -303,7 +304,7 @@ with col_timeline:
         st.caption("No event flow data available.")
 
     # ── Raw log table ────────────────────────────────────────────────────────
-    st.markdown("<h3>📄 Raw Log Inspector</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>Raw Log Inspector</h3>", unsafe_allow_html=True)
     display_cols = [
         c for c in [
             "sequence_number", "timestamp", "host", "template_id",
@@ -323,7 +324,7 @@ with col_timeline:
         },
     )
     st.download_button(
-        "⬇️ Export CSV",
+        "Export CSV",
         data=incident_logs[display_cols].to_csv(index=False),
         file_name=f"incident_{cid}_logs.csv",
         mime="text/csv",
@@ -333,7 +334,7 @@ with col_timeline:
 # ── RIGHT: AI Summary, ML Diagnostics, Root Cause Candidates ─────────────
 with col_summary:
     st.markdown(
-        "<h3 style='margin-bottom:0.4rem;'>🤖 AI Incident Summary</h3>",
+        "<h3 style='margin-bottom:0.4rem;'>AI Incident Summary</h3>",
         unsafe_allow_html=True,
     )
 
@@ -361,7 +362,7 @@ with col_summary:
             unsafe_allow_html=True,
         )
 
-    if st.button("🔄 Regenerate summary", use_container_width=True):
+    if st.button("Regenerate summary", use_container_width=True):
         with st.spinner("Calling Gemini API…"):
             template_seq = ""
             if not incident_logs.empty and "template_id" in incident_logs.columns:
@@ -386,7 +387,7 @@ with col_summary:
     st.divider()
 
     # System Health Check
-    st.markdown("<h3>🩺 System Health Check</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>System Health Check</h3>", unsafe_allow_html=True)
     db_ok    = db.is_db_healthy()
     es_ok    = es.is_elasticsearch_healthy()
     db_color = "#22C55E" if db_ok else "#DC2626"
@@ -408,7 +409,7 @@ with col_summary:
     )
 
     # ── ML Diagnostics ───────────────────────────────────────────────────────
-    st.markdown("<h3>📊 ML Diagnostics</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>ML Diagnostics</h3>", unsafe_allow_html=True)
 
     max_final = float(incident_logs["final_score"].max())           if "final_score"           in incident_logs.columns else 0.0
     max_rc    = float(incident_logs["root_cause_confidence"].max()) if "root_cause_confidence" in incident_logs.columns else 0.0
@@ -453,7 +454,7 @@ with col_summary:
     st.markdown(diag_html, unsafe_allow_html=True)
 
     # Classification Rationale
-    st.markdown("<h4>🚨 Classification Rationale</h4>", unsafe_allow_html=True)
+    st.markdown("<h4>Classification Rationale</h4>", unsafe_allow_html=True)
     reasons = []
     if max_sev  >= 0.7: reasons.append("<li>High severity template match (CRITICAL / ERROR log level detected).</li>")
     if max_prox >= 0.5: reasons.append("<li>Direct statistical proximity to interface drop/packet drop templates.</li>")
@@ -473,7 +474,7 @@ with col_summary:
     st.divider()
 
     # Root cause candidates list
-    st.markdown("<h3>🎯 Root Cause Candidates</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>Root Cause Candidates</h3>", unsafe_allow_html=True)
     if root_causes.empty:
         st.caption("No root cause candidates identified.")
     else:
@@ -525,12 +526,12 @@ with col_summary:
     st.divider()
 
     # Deep links
-    st.markdown("<h3>🔗 External Integrations</h3>", unsafe_allow_html=True)
+    st.markdown("<h3>External Integrations</h3>", unsafe_allow_html=True)
     grafana_url = f"http://localhost:3000/d/incidents?var-incident={cid}"
     kibana_url  = f"http://localhost:5601/app/discover#/?_g=()&_a=(query:(match_phrase:(correlation_id:'{cid}')))"
 
     link_col1, link_col2 = st.columns(2)
     with link_col1:
-        st.link_button("📊 Open Grafana", grafana_url, use_container_width=True)
+        st.link_button("Open Grafana", grafana_url, use_container_width=True)
     with link_col2:
-        st.link_button("🔎 Open Kibana", kibana_url, use_container_width=True)
+        st.link_button("Open Kibana", kibana_url, use_container_width=True)

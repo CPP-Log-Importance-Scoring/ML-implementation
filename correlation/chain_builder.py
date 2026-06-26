@@ -136,8 +136,11 @@ def assign_chains(
             results.append(_no_chain(curr))
             continue
 
-        # Collect all distinct non-None chain_ids from matching incidents
-        matched_chain_ids = {m["chain_id"] for m in matches if m["chain_id"]}
+        # Collect all distinct non-None, non-NaN chain_ids from matching incidents
+        matched_chain_ids = {
+            m["chain_id"] for m in matches
+            if m["chain_id"] and isinstance(m["chain_id"], str)
+        }
 
         if not matched_chain_ids:
             # All matching historical incidents are still unlinked → new chain
@@ -175,7 +178,7 @@ def assign_chains(
         chain_position = _max_chain_pos(history, chain_id) + 1
 
         logger.info(
-            "Incident %s → chain=%s, precursor=%s, "
+            "Incident %s -> chain=%s, precursor=%s, "
             "jaccard=%.3f, overlap=%.3f, position=%d",
             curr["global_incident_id"],
             chain_id,
