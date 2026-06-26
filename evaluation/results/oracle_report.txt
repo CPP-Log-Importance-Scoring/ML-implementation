@@ -1,30 +1,23 @@
 ORACLE EVALUATION REPORT
 truth = log_level in ['CRITICAL', 'HIGH', 'ERROR'] (severity is excluded from IF features; final_score ranking metrics are partially favoured by the severity term)
 
-total_logs: 4802
-truth_signal_count: 1432
-truth_signal_rate: 0.2982
+total_logs: 5000
+truth_signal_count: 0
+truth_signal_rate: 0.0000
 unscored_rows: 0
-anomaly_flagged_count: 1035
-anomaly_flagged_rate: 0.2155
-anomaly_tp: 225
-anomaly_fp: 810
-anomaly_fn: 1207
-anomaly_precision: 0.2174
-anomaly_recall: 0.1571
-anomaly_f1: 0.1824
-ranking_recall_at_k: 0.8708
-ranking_recall_at_k_ml: 0.2556
-mean_final_score_signal: 0.5552
-mean_final_score_noise: 0.3377
-score_separation: 0.2175
-critical_capture_rate: 1.0000
-noise_suppression_ratio: 0.2653
-signal_incident_coverage: 0.9853
-scenario_detection_rate: 1.0000
-scenarios_detected: 1
-scenarios_total: 1
-
-Per-scenario breakdown:
-   scenario_id         training_label  n_logs  n_signal  n_signal_flagged  signal_recall  detected
-anomalous_high ANOMALOUS_HIGH_DENSITY    4802      1432               225       0.157123      True
+anomaly_flagged_count: 4914
+anomaly_flagged_rate: 0.9828
+anomaly_tp: 0
+anomaly_fp: 4914
+anomaly_fn: 0
+anomaly_precision: 0.0000
+anomaly_recall: 0.0000
+anomaly_f1: 0.0000
+ranking_recall_at_k: 0.0000
+ranking_recall_at_k_ml: 0.0000
+mean_final_score_signal: 0.0000
+mean_final_score_noise: 0.3870
+score_separation: -0.3870
+critical_capture_rate: 0.0000
+noise_suppression_ratio: 0.0000
+signal_incident_coverage: 0.0000

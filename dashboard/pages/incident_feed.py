@@ -99,7 +99,6 @@ st.markdown(
 if not incidents:
     st.markdown(
         "<div style=\"background:#f8fafc; border:1px dashed #cbd5e1; border-radius:12px; padding:3rem 2rem; text-align:center; margin-top:1rem;\">"
-        "<div style=\"font-size:2.5rem; margin-bottom:0.75rem;\">🔍</div>"
         "<div style=\"font-weight:600; color:#334155; font-size:1rem;\">No incidents found</div>"
         "<div style=\"color:#64748b; font-size:0.85rem; margin-top:0.4rem;\">Adjust your filters or run the scoring pipeline.</div>"
         "</div>",
@@ -178,14 +177,14 @@ for incident in incidents_sorted:
                 + cross_badge
                 + "</div>"
                 "<div style=\"font-family:IBM Plex Mono,monospace; font-size:0.78rem; color:#64748b;\">"
-                "&#9203; " + dur_str + " &nbsp;&middot;&nbsp; &#128203; " + f"{log_count:,}" + " events"
+                + dur_str + " &nbsp;&middot;&nbsp; " + f"{log_count:,}" + " events"
                 "</div>"
                 "</div>"
 
                 # Row 2: timestamp + host
                 "<div style=\"margin-top:6px; font-size:0.8rem; color:#475569; font-family:IBM Plex Mono,monospace;\">"
-                "&#128197; " + start_str + " &rarr; " + end_str
-                + " &nbsp;&middot;&nbsp; &#128187; Host: <span style=\"font-weight:600; color:#0f172a;\">" + str(host) + "</span>"
+                + start_str + " &rarr; " + end_str
+                + " &nbsp;&middot;&nbsp; Host: <span style=\"font-weight:600; color:#0f172a;\">" + str(host) + "</span>"
                 "</div>"
 
                 # Row 3: summary preview — content is already HTML-escaped above

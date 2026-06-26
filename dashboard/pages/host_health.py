@@ -42,6 +42,11 @@ with st.sidebar:
 # ── Page header ────────────────────────────────────────────────────────────
 st.markdown("<h1>Host Health & Anomalies</h1>", unsafe_allow_html=True)
 
+if not db.is_db_healthy():
+    st.info(
+        "Host Health is derived from the latest processed log data. When PostgreSQL is unavailable, the dashboard uses the local parquet files in data/processed/ so the page still works."
+    )
+
 # ── Fetch data ─────────────────────────────────────────────────────────────
 with st.spinner("Loading host statistics…"):
     try:

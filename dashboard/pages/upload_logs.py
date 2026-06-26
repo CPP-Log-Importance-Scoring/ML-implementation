@@ -60,6 +60,7 @@ SCORED_PARQUET     = Path("data/processed/scored_logs_df.parquet")
 # scored parquet is scores-only, keyed by sequence_number. We join the two so
 # the result view can show *what actually happened*, not just counts.
 SESSIONIZED_PARQUET = Path("data/processed/sessionized_logs.parquet")
+ANOMALY_PARQUET     = Path("data/processed/anomaly_df.parquet")
 
 # Label severity order (worst-first) for sorting / display
 LABEL_ORDER = ["critical", "medium", "low", "ignore"]
@@ -435,7 +436,13 @@ if st.session_state.job_status in ("success", "failed"):
 
             # ── Overview metrics ─────────────────────────────────────────
             total_rows      = len(df)
-            total_anomalies = db.get_anomaly_count()
+            # Count anomalies from the current batch's parquet — not the
+            # global DB table, which accumulates across all prior runs.
+            _anomaly_df = _load_results(ANOMALY_PARQUET)
+            if _anomaly_df is not None and "is_anomaly" in _anomaly_df.columns:
+                total_anomalies = int(_anomaly_df["is_anomaly"].sum())
+            else:
+                total_anomalies = db.get_anomaly_count()
             label_col_exists = "label" in df.columns
             total_incidents = (
                 df[df["label"].isin(["medium", "critical"])].shape[0]
