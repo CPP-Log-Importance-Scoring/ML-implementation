@@ -454,6 +454,36 @@ if st.session_state.job_status in ("success", "failed"):
             m2.metric("Anomalies detected",   total_anomalies if isinstance(total_anomalies, str) else f"{total_anomalies:,}")
             m3.metric("Medium/Critical Logs", total_incidents if isinstance(total_incidents, str) else f"{total_incidents:,}")
 
+            # ── Volume stats ─────────────────────────────────────────────
+            _surfaced    = total_anomalies if isinstance(total_anomalies, int) else 0
+            _reduction   = (1.0 - _surfaced / total_rows) * 100 if total_rows > 0 else 0.0
+            _signal_rate = (_surfaced / total_rows) * 100 if total_rows > 0 else 0.0
+            _reduction_color = "#15803d" if _reduction >= 80 else ("#b45309" if _reduction >= 50 else "#dc2626")
+
+            st.markdown(
+                f"""
+                <div style='display:flex; gap:1rem; margin-top:1rem; flex-wrap:wrap;'>
+                  <div style='flex:1; min-width:160px; background:#f8fafc; border:1px solid #e2e8f0;
+                              border-radius:10px; padding:0.85rem 1rem;'>
+                    <div style='font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em;
+                                color:#64748b; font-weight:600;'>Noise Reduction</div>
+                    <div style='font-size:1.45rem; font-weight:800; color:{_reduction_color};
+                                font-family:"IBM Plex Mono",monospace; margin-top:2px;'>{_reduction:.1f}%</div>
+                    <div style='font-size:0.75rem; color:#94a3b8; margin-top:2px;'>of volume suppressed by ML</div>
+                  </div>
+                  <div style='flex:1; min-width:160px; background:#f8fafc; border:1px solid #e2e8f0;
+                              border-radius:10px; padding:0.85rem 1rem;'>
+                    <div style='font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em;
+                                color:#64748b; font-weight:600;'>Signal Rate</div>
+                    <div style='font-size:1.45rem; font-weight:800; color:#7c3aed;
+                                font-family:"IBM Plex Mono",monospace; margin-top:2px;'>{_signal_rate:.1f}%</div>
+                    <div style='font-size:0.75rem; color:#94a3b8; margin-top:2px;'>of stream flagged as anomalous</div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
             # ── Severity distribution ────────────────────────────────────
             if label_col_exists:
                 st.markdown("#### Severity Distribution")
