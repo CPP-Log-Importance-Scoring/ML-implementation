@@ -40,7 +40,7 @@ with st.sidebar:
     start_dt, end_dt = render_time_window("host_health")
 
 # ── Page header ────────────────────────────────────────────────────────────
-st.markdown("<h1>🖥️ Host Health & Anomalies</h1>", unsafe_allow_html=True)
+st.markdown("<h1>Host Health & Anomalies</h1>", unsafe_allow_html=True)
 
 # ── Fetch data ─────────────────────────────────────────────────────────────
 with st.spinner("Loading host statistics…"):
@@ -56,7 +56,6 @@ if stats is None or stats.empty:
         """
         <div style='background:#f8fafc; border:1px dashed #cbd5e1; border-radius:12px;
                     padding:3rem 2rem; text-align:center; margin-top:1rem;'>
-          <div style='font-size:2.5rem; margin-bottom:0.75rem;'>🖥️</div>
           <div style='font-weight:600; color:#334155; font-size:1rem;'>No host data for this time range</div>
           <div style='color:#64748b; font-size:0.85rem; margin-top:0.4rem;'>
             Run the scoring pipeline first, or expand the time window.
@@ -187,7 +186,7 @@ if "host" in stats.columns:
 if "incident_count" in stats.columns:
     col_config["incident_count"] = st.column_config.NumberColumn("Incidents", format="%d")
 if "critical_count" in stats.columns:
-    col_config["critical_count"] = st.column_config.NumberColumn("Critical 🔴", format="%d")
+    col_config["critical_count"] = st.column_config.NumberColumn("Critical", format="%d")
 if "anomaly_rate" in stats.columns:
     col_config["anomaly_rate"] = st.column_config.ProgressColumn(
         "Anomaly Rate",

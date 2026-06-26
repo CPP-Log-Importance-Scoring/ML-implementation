@@ -59,7 +59,6 @@ with hero_col:
                     padding: 2rem 2rem 1.4rem 2rem; border-radius: 18px; margin-bottom: 1.2rem;
                     box-shadow: 0 10px 30px rgba(15,23,42,0.18); border: 1px solid rgba(148,163,184,0.18);'>
           <div style='display:flex; align-items:center; gap:10px; margin-bottom:0.5rem;'>
-            <div style='font-size:1.8rem;'>⚡</div>
             <span style='font-size:0.82rem; text-transform:uppercase; letter-spacing:0.18em; color:#cbd5e1;'>HPE CX Intelligence Hub</span>
           </div>
           <h1 style='font-size:2.15rem; font-weight:800; color:#ffffff !important; margin:0 0 0.35rem 0; letter-spacing:-0.03em;'>
@@ -100,7 +99,6 @@ with col1:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">📋</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Feed</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Real-time incident view with severity, host, and cross-system correlation filters.
@@ -118,7 +116,6 @@ with col2:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">🔍</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Detail</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Force-directed correlation graphs, interactive timelines, and cached AI summaries.
@@ -136,7 +133,6 @@ with col3:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">🖥️</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Host Health</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Per-host statistics, incident counts, anomaly rate visualizations, and trend graphs.
@@ -154,7 +150,6 @@ with col4:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">🔎</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Log Search</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Full-text search indexed via Elasticsearch with filters and CSV export capabilities.
@@ -173,7 +168,6 @@ with col5:
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;
                   border: 1px solid rgba(59,130,246,0.35); background: rgba(59,130,246,0.04);">
           <div>
-            <div style="font-size: 1.6rem; margin-bottom: 0.5rem;">📤</div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Upload & Analyze</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Drag in .log files, trigger the full pipeline, watch live progress, and view a result summary.
@@ -187,4 +181,4 @@ with col5:
         st.switch_page("pages/upload_logs.py")
 
 st.markdown("<br><br>", unsafe_allow_html=True)
-st.info("👈 Use the sidebar navigation or click any buttons above to explore.", icon="ℹ️")
+st.info("Use the sidebar navigation or click any buttons above to explore.")

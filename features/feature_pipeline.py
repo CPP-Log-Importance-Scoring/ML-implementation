@@ -141,7 +141,7 @@ def run_pipeline(input_path: str) -> pd.DataFrame:
         # 9. Save
         save_parquet(out, FEATURES_OUTPUT_PATH)
         logger.info(
-            f"Saved features_df → {FEATURES_OUTPUT_PATH} ({len(out):,} rows, "
+            f"Saved features_df -> {FEATURES_OUTPUT_PATH} ({len(out):,} rows, "
             f"{len(FEATURE_COLUMNS)} columns)"
         )
 

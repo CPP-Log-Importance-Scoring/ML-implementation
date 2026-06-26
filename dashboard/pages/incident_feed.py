@@ -27,6 +27,22 @@ st.set_page_config(
 apply_theme()
 render_sidebar_nav()
 
+_FEED_FILTER_BK = "_backing_feed_filters"
+if _FEED_FILTER_BK not in st.session_state:
+    st.session_state[_FEED_FILTER_BK] = {
+        "host_filter":       [],
+        "severity_filter":   ["critical", "medium", "low"],
+        "cross_system_only": False,
+    }
+_fbk = st.session_state[_FEED_FILTER_BK]
+
+if "feed_host_filter" not in st.session_state:
+    st.session_state["feed_host_filter"] = list(_fbk["host_filter"])
+if "feed_severity_filter" not in st.session_state:
+    st.session_state["feed_severity_filter"] = list(_fbk["severity_filter"])
+if "feed_cross" not in st.session_state:
+    st.session_state["feed_cross"] = _fbk["cross_system_only"]
+
 with st.sidebar:
     st.markdown(
         "<div style=\"font-size:0.75rem; font-weight:700; text-transform:uppercase; "
@@ -36,11 +52,17 @@ with st.sidebar:
     start_dt, end_dt = render_time_window("feed")
     st.markdown("---")
     all_hosts = db.get_host_list()
-    host_filter = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
-    severity_filter = st.multiselect("Severity", options=["critical", "medium", "low", "ignore"], default=["critical", "medium", "low"], key="feed_severity_filter")
+    host_filter       = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
+    severity_filter   = st.multiselect("Severity", options=["critical", "medium", "low", "ignore"], default=["critical", "medium", "low"], key="feed_severity_filter")
     cross_system_only = st.toggle("Cross-system only", value=False, key="feed_cross")
     st.markdown("---")
     st.caption("Showing up to 200 most recent incidents.")
+
+    st.session_state[_FEED_FILTER_BK] = {
+        "host_filter":       host_filter,
+        "severity_filter":   severity_filter,
+        "cross_system_only": cross_system_only,
+    }
 
 with st.spinner("Loading incidents…"):
     incidents = db.get_incidents(
@@ -53,7 +75,7 @@ with st.spinner("Loading incidents…"):
     if len(host_filter) > 1:
         incidents = [i for i in incidents if i.get("host") in host_filter]
 
-st.markdown("<h1>📋 Incident Feed</h1>", unsafe_allow_html=True)
+st.markdown("<h1>Incident Feed</h1>", unsafe_allow_html=True)
 
 total          = len(incidents)
 critical_count = sum(1 for i in incidents if (i.get("label") or "").lower() == "critical")

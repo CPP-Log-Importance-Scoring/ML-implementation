@@ -352,12 +352,12 @@ def apply_theme() -> None:
 
 # (page path, emoji label) — the single source of truth for the sidebar nav.
 _NAV_LINKS = [
-    ("app.py",                   "🏠 Home"),
-    ("pages/incident_feed.py",   "📋 Incident Feed"),
-    ("pages/incident_detail.py", "🔍 Incident Detail"),
-    ("pages/host_health.py",     "🖥️ Host Health"),
-    ("pages/log_search.py",      "🔎 Log Search"),
-    ("pages/upload_logs.py",     "📤 Upload & Analyze"),
+    ("app.py",                   "Home"),
+    ("pages/incident_feed.py",   "Incident Feed"),
+    ("pages/incident_detail.py", "Incident Detail"),
+    ("pages/host_health.py",     "Host Health"),
+    ("pages/log_search.py",      "Log Search"),
+    ("pages/upload_logs.py",     "Upload & Analyze"),
 ]
 
 
@@ -374,7 +374,7 @@ def render_sidebar_nav() -> None:
             """
             <div style='padding: 0.5rem 0 1rem 0;'>
               <div style='font-size:1.15rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
-                ⚡ HPE CX Intelligence
+                HPE CX Intelligence
               </div>
               <div style='font-size:0.7rem; color:#64748b; margin-top:2px; font-family:"IBM Plex Mono",monospace;'>
                 Observability Platform
@@ -398,33 +398,57 @@ def render_time_window(prefix: str = "time"):
     Render start/end date+time pickers in the sidebar.
     Returns (start_dt, end_dt) as datetime objects.
 
-    Uses session_state for defaults to avoid Streamlit DuplicateWidgetID errors.
+    Values survive page navigation via a backing-store key.  Streamlit clears
+    widget keys when the widget is not rendered on the current page, but never
+    clears plain session_state keys set by application code.  The backing store
+    is the source of truth; widget keys are seeded from it on each page entry.
     """
     now = datetime.now().replace(second=0, microsecond=0)
     default_start = now - timedelta(days=7)
 
-    if f"{prefix}_start_date" not in st.session_state:
-        st.session_state[f"{prefix}_start_date"] = default_start.date()
-    if f"{prefix}_start_time" not in st.session_state:
-        st.session_state[f"{prefix}_start_time"] = time(0, 0)
-    if f"{prefix}_end_date" not in st.session_state:
-        st.session_state[f"{prefix}_end_date"] = now.date()
-    if f"{prefix}_end_time" not in st.session_state:
-        st.session_state[f"{prefix}_end_time"] = time(23, 59)
+    _bk = f"_backing_{prefix}_time"
+    if _bk not in st.session_state:
+        st.session_state[_bk] = {
+            "start_date": default_start.date(),
+            "start_time": time(0, 0),
+            "end_date":   now.date(),
+            "end_time":   time(23, 59),
+        }
+    _backed = st.session_state[_bk]
 
-    start_date = st.date_input("Start date", key=f"{prefix}_start_date")
-    start_time_val = st.time_input("Start time", key=f"{prefix}_start_time", step=300)
-    end_date = st.date_input("End date", key=f"{prefix}_end_date")
-    end_time_val = st.time_input("End time", key=f"{prefix}_end_time", step=300)
+    _sd = f"{prefix}_start_date"
+    _st = f"{prefix}_start_time"
+    _ed = f"{prefix}_end_date"
+    _et = f"{prefix}_end_time"
+    if _sd not in st.session_state:
+        st.session_state[_sd] = _backed["start_date"]
+    if _st not in st.session_state:
+        st.session_state[_st] = _backed["start_time"]
+    if _ed not in st.session_state:
+        st.session_state[_ed] = _backed["end_date"]
+    if _et not in st.session_state:
+        st.session_state[_et] = _backed["end_time"]
+
+    start_date     = st.date_input("Start date",  key=_sd)
+    start_time_val = st.time_input("Start time",  key=_st, step=300)
+    end_date       = st.date_input("End date",    key=_ed)
+    end_time_val   = st.time_input("End time",    key=_et, step=300)
+
+    st.session_state[_bk] = {
+        "start_date": start_date,
+        "start_time": start_time_val,
+        "end_date":   end_date,
+        "end_time":   end_time_val,
+    }
 
     start_dt = datetime.combine(start_date, start_time_val)
-    end_dt = datetime.combine(end_date, end_time_val)
+    end_dt   = datetime.combine(end_date, end_time_val)
 
     if end_dt < start_dt:
         st.error("End must be after start.")
         st.stop()
 
-    st.caption(f"📅 {start_dt:%d %b %Y %H:%M} → {end_dt:%d %b %Y %H:%M}")
+    st.caption(f"{start_dt:%d %b %Y %H:%M} → {end_dt:%d %b %Y %H:%M}")
     return start_dt, end_dt
 
 

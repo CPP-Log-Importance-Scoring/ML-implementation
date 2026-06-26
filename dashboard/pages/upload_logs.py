@@ -162,6 +162,54 @@ def _load_results(parquet_path: Path) -> pd.DataFrame | None:
         return None
 
 
+def _update_feed_time_filter_once(df: pd.DataFrame | None) -> None:
+    """Sync the Incident Feed time-window and filter backing stores to cover the
+    uploaded batch.  Runs at most once per batch (guarded by job_batch_id) so
+    that the user can freely adjust feed filters after visiting the page without
+    them being reset on every re-render of this success view."""
+    batch_id = st.session_state.get("job_batch_id")
+    if batch_id and st.session_state.get("_feed_updated_batch") == batch_id:
+        return
+
+    _TIME_BK   = "_backing_feed_time"
+    _FILTER_BK = "_backing_feed_filters"
+
+    feed_start = feed_end = None
+
+    if df is not None and "timestamp" in df.columns:
+        try:
+            ts = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
+            if len(ts):
+                feed_start = (ts.min() - pd.Timedelta(hours=1)).to_pydatetime()
+                feed_end   = (ts.max() + pd.Timedelta(hours=1)).to_pydatetime()
+        except Exception:
+            pass
+
+    if feed_start is None:
+        from datetime import timedelta as _td
+        feed_end   = datetime.now(timezone.utc).replace(tzinfo=None)
+        feed_start = feed_end - _td(days=30)
+
+    st.session_state[_TIME_BK] = {
+        "start_date": feed_start.date(),
+        "start_time": feed_start.time().replace(second=0, microsecond=0),
+        "end_date":   feed_end.date(),
+        "end_time":   feed_end.time().replace(second=0, microsecond=0),
+    }
+    for _k in ["feed_start_date", "feed_start_time", "feed_end_date", "feed_end_time"]:
+        st.session_state.pop(_k, None)
+
+    st.session_state[_FILTER_BK] = {
+        "host_filter":       [],
+        "severity_filter":   ["critical", "medium", "low"],
+        "cross_system_only": False,
+    }
+    for _k in ["feed_host_filter", "feed_severity_filter", "feed_cross"]:
+        st.session_state.pop(_k, None)
+
+    st.session_state["_feed_updated_batch"] = batch_id
+
+
 # ---------------------------------------------------------------------------
 # Session state initialisation
 # ---------------------------------------------------------------------------
@@ -193,7 +241,6 @@ st.markdown(
                 padding: 1.4rem 2rem; border-radius: 14px; margin-bottom: 1.2rem;
                 border: 1px solid rgba(148,163,184,0.18);'>
       <div style='display:flex; align-items:center; gap:10px;'>
-        <span style='font-size:1.6rem;'>📤</span>
         <div>
           <div style='font-size:1.4rem; font-weight:800; color:#ffffff; letter-spacing:-0.02em;'>
             Upload & Analyze
@@ -242,7 +289,7 @@ if not job_running and not job_finished:
 
     analyze_disabled = not uploaded_files
     analyze_clicked  = st.button(
-        "🚀 Analyze",
+        "Analyze",
         type="primary",
         disabled=analyze_disabled,
         use_container_width=False,
@@ -309,7 +356,7 @@ if st.session_state.job_status == "running":
             f"**Dry run:** {'Yes' if st.session_state.job_dry_run else 'No'}"
         )
     with meta_col:
-        st.metric("Status", "⏳ Running")
+        st.metric("Status", "Running")
 
     log_text = _tail_log(st.session_state.job_log_path, last_n=25)
     with st.expander("Pipeline log (live tail)", expanded=True):
@@ -342,11 +389,11 @@ if st.session_state.job_status in ("success", "failed"):
     # ── Header ──────────────────────────────────────────────────────────────
     if status_ok:
         st.success(
-            f"✅ Pipeline completed successfully — batch `{st.session_state.job_batch_id}`"
+            f"Pipeline completed successfully — batch `{st.session_state.job_batch_id}`"
         )
     else:
         st.error(
-            f"❌ Pipeline failed — batch `{st.session_state.job_batch_id}`"
+            f"Pipeline failed — batch `{st.session_state.job_batch_id}`"
         )
 
     # ── Final log dump ───────────────────────────────────────────────────────
@@ -384,7 +431,7 @@ if st.session_state.job_status in ("success", "failed"):
                 df = df.merge(logs_df[join_cols], on="sequence_number", how="left")
 
             st.markdown("---")
-            st.subheader("📊 Result Summary")
+            st.subheader("Result Summary")
 
             # ── Overview metrics ─────────────────────────────────────────
             total_rows      = len(df)
@@ -433,7 +480,7 @@ if st.session_state.job_status in ("success", "failed"):
                     flagged = flagged.sort_values(score_col, ascending=False)
                 flagged = flagged.reset_index(drop=True)
 
-                st.markdown("#### 🚨 Critical & Medium Logs")
+                st.markdown("#### Critical & Medium Logs")
 
                 if flagged.empty:
                     st.info("No critical or medium-severity logs were flagged in this batch.")
@@ -473,7 +520,7 @@ if st.session_state.job_status in ("success", "failed"):
                             host = row.get("host", "—")
                             ts   = row.get("timestamp", "—")
                             etype = row.get("event_type", "")
-                            header = f"🔴 {ts}  ·  {host}" + (f"  ·  {etype}" if etype else "")
+                            header = f"{ts}  ·  {host}" + (f"  ·  {etype}" if etype else "")
                             with st.expander(header):
                                 st.write(row.get("message", "(no message)"))
                                 meta = {
@@ -485,9 +532,22 @@ if st.session_state.job_status in ("success", "failed"):
                                 if meta:
                                     st.json(meta, expanded=False)
 
+    # ── Navigate to Incident Feed ────────────────────────────────────────────
+    if status_ok and not st.session_state.get("job_dry_run", False):
+        _update_feed_time_filter_once(df)
+        _col_feed, _ = st.columns([2, 5])
+        with _col_feed:
+            if st.button(
+                "View incidents in Incident Feed →",
+                type="primary",
+                use_container_width=True,
+                key="nav_to_feed",
+            ):
+                st.switch_page("pages/incident_feed.py")
+
     # ── Restart button ───────────────────────────────────────────────────────
     st.markdown("---")
-    if st.button("🔄 Upload more files / start new analysis", type="secondary"):
+    if st.button("Upload more files / start new analysis", type="secondary"):
         # Clear job state so the upload form reappears
         for key in [
             "job_batch_id", "job_batch_dir", "job_log_path",
