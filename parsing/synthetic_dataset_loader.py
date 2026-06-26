@@ -568,19 +568,19 @@ def run(
     validate_schema(df, REQUIRED_OUTPUT_COLUMNS)
     save_parquet(df[REQUIRED_OUTPUT_COLUMNS], output_path)
     logger.info(
-        "Wrote %d event rows → %s (%d sessions, %d templates)",
+        "Wrote %d event rows -> %s (%d sessions, %d templates)",
         len(df), output_path, df["session_id"].nunique(), df["template_id"].nunique(),
     )
 
     # Metrics (long/tidy). May legitimately be empty for label-only inputs.
     metrics_df = pd.DataFrame(all_metric_rows, columns=METRICS_COLUMNS)
     save_parquet(metrics_df, metrics_path)
-    logger.info("Wrote %d metric samples → %s", len(metrics_df), metrics_path)
+    logger.info("Wrote %d metric samples -> %s", len(metrics_df), metrics_path)
 
     # Oracle labels.
     labels_df = pd.DataFrame(all_labels, columns=LABEL_COLUMNS)
     save_parquet(labels_df, labels_path)
-    logger.info("Wrote %d scenario labels → %s", len(labels_df), labels_path)
+    logger.info("Wrote %d scenario labels -> %s", len(labels_df), labels_path)
 
     return df
 
