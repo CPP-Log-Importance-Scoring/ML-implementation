@@ -29,7 +29,23 @@ labels          critical_capture_rate — truth-signal rows labelled
                 medium/critical; noise_suppression_ratio — non-signal rows
                 labelled ignore.
 incidents       fraction of truth-signal rows assigned a correlation_id.
-per-scenario    signal recall and detection flag per scenario file.
+incident-level  the metrics that match the real deliverable (incident
+                surfacing, not per-row labels). Incidents are grouped by
+                correlation_id and escalated via the SAME production rule the
+                dashboard alerts on (cross_run._incident_escalation):
+                  escalated_incident_precision — of surfaced (escalated)
+                    incidents, fraction that contain a real truth-signal row
+                    (1 - false-alarm rate at the incident level).
+                  incident_signal_recall — fraction of truth-signal rows that
+                    land INSIDE an escalated incident (operationalises the
+                    sim_real "0/21 critical rows clustered" finding).
+                  scenario_escalation_precision / _recall — can the system
+                    tell a clean day from an anomaly day? A scenario "fires"
+                    if it holds >=1 escalated incident; precision/recall are
+                    measured against truth-bearing scenarios. This is the
+                    clean-vs-anomaly discrimination the row metrics can't show.
+per-scenario    signal recall and detection flag per scenario file, plus the
+                incident / escalated-incident counts per scenario.
 
 Public API
 ----------
@@ -70,6 +86,107 @@ def _prf(y_true: pd.Series, y_pred: pd.Series) -> dict:
             "precision": precision, "recall": recall, "f1": f1}
 
 
+def _incident_level_metrics(df: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
+    """Incident-level evaluation — the metrics that match the real deliverable.
+
+    Groups the eval frame by correlation_id, escalates each incident with the
+    SAME rule the dashboard surfaces on (cross_run._incident_escalation, imported
+    so the eval can never drift from production), and scores incidents against
+    truth-signal rows.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Eval frame with at least correlation_id, is_signal, label, and (ideally)
+        event_weight + scenario_id.
+
+    Returns
+    -------
+    (metrics, incident_df)
+        metrics : dict of incident-/scenario-level scalars.
+        incident_df : one row per incident (correlation_id, scenario_id,
+            is_escalated, contains_signal, n_signal, n_rows) — used to enrich the
+            per-scenario breakdown. Empty if no incidents were formed.
+    """
+    # Imported here (not at module top) to keep the dependency lazy and avoid a
+    # correlation->evaluation import cycle. This is the authoritative gate the
+    # dashboard alerts on; reusing it means the metric and production agree.
+    from correlation.cross_run import _incident_escalation
+
+    metrics: dict = {}
+    if "correlation_id" not in df.columns:
+        return metrics, pd.DataFrame()
+
+    incident_rows = df[df["correlation_id"].notna()]
+    n_signal_total = int(df["is_signal"].sum())
+
+    records: list[dict] = []
+    signal_rows_in_escalated = 0
+    for cid, grp in incident_rows.groupby("correlation_id"):
+        is_escalated, reason, n_crit, n_high = _incident_escalation(grp)
+        n_signal = int(grp["is_signal"].sum())
+        if is_escalated:
+            signal_rows_in_escalated += n_signal
+        # Majority scenario for the per-scenario rollup (incidents are within-run,
+        # so this is virtually always a single scenario).
+        scenario = (
+            grp["scenario_id"].mode().iloc[0]
+            if "scenario_id" in grp.columns and grp["scenario_id"].notna().any()
+            else None
+        )
+        records.append({
+            "correlation_id": str(cid),
+            "scenario_id": scenario,
+            "is_escalated": bool(is_escalated),
+            "escalation_reason": reason,
+            "contains_signal": bool(n_signal > 0),
+            "n_signal": n_signal,
+            "n_rows": int(len(grp)),
+        })
+
+    incident_df = pd.DataFrame(records)
+    metrics["n_incidents"] = int(len(incident_df))
+    if incident_df.empty:
+        # No incidents formed. On a clean batch this is the correct outcome; the
+        # downstream ratios are vacuously perfect/zero and reported as such.
+        metrics["n_incidents_escalated"] = 0
+        metrics["escalated_incident_precision"] = 0.0
+        metrics["incident_signal_recall"] = 0.0
+        return metrics, incident_df
+
+    escalated = incident_df[incident_df["is_escalated"]]
+    metrics["n_incidents_escalated"] = int(len(escalated))
+    # Of the incidents we'd actually surface, how many are real?
+    metrics["escalated_incident_precision"] = _safe_ratio(
+        int(escalated["contains_signal"].sum()), len(escalated)
+    )
+    # Do the severe rows actually land inside a surfaced incident?
+    metrics["incident_signal_recall"] = _safe_ratio(signal_rows_in_escalated, n_signal_total)
+
+    # ------------------------------------------------------------------
+    # Scenario-level discrimination — can we tell a clean day from an
+    # anomaly day? A scenario "fires" if it holds >=1 escalated incident.
+    # ------------------------------------------------------------------
+    if "scenario_id" in df.columns and df["scenario_id"].notna().any():
+        truth_scenarios = set(
+            df.loc[df["is_signal"], "scenario_id"].dropna().unique()
+        )
+        fired_scenarios = set(
+            incident_df.loc[incident_df["is_escalated"], "scenario_id"].dropna().unique()
+        )
+        all_scenarios = set(df["scenario_id"].dropna().unique())
+        if all_scenarios:
+            tp = len(fired_scenarios & truth_scenarios)
+            metrics["scenario_escalation_precision"] = _safe_ratio(tp, len(fired_scenarios))
+            metrics["scenario_escalation_recall"] = _safe_ratio(tp, len(truth_scenarios))
+            metrics["clean_scenarios_total"] = int(len(all_scenarios - truth_scenarios))
+            metrics["clean_scenarios_fired"] = int(
+                len((all_scenarios - truth_scenarios) & fired_scenarios)
+            )
+
+    return metrics, incident_df
+
+
 def run_oracle_report(
     scored_path: str = "data/processed/scored_logs_df.parquet",
     anomaly_path: str = "data/processed/anomaly_df.parquet",
@@ -97,6 +214,15 @@ def run_oracle_report(
     base_cols = ["sequence_number", "log_level"]
     if "scenario_id" in session_df.columns:
         base_cols.append("scenario_id")
+    # event_weight feeds the incident escalation rule the metrics reuse. Prefer
+    # the credibility-adjusted value persisted in scored_df (exactly what the
+    # production escalation gate reads); only fall back to the raw sessionized
+    # value for legacy outputs that don't carry it. Pulling the raw value would
+    # make the metric count benign "...- NORMAL" lines as high-severity even
+    # though production no longer does — diverging the metric from the gate.
+    scored_has_ew = "event_weight" in scored_df.columns
+    if not scored_has_ew and "event_weight" in session_df.columns:
+        base_cols.append("event_weight")
     df = session_df[base_cols].copy()
     df["is_signal"] = df["log_level"].str.upper().isin(truth_levels)
 
@@ -104,7 +230,7 @@ def run_oracle_report(
         anomaly_df[["sequence_number", "is_anomaly", "combined_score"]],
         on="sequence_number", how="left",
     )
-    scored_cols = ["sequence_number", "final_score", "label", "correlation_id"]
+    scored_cols = ["sequence_number", "final_score", "label", "correlation_id", "event_weight"]
     scored_cols = [c for c in scored_cols if c in scored_df.columns]
     df = df.merge(scored_df[scored_cols], on="sequence_number", how="left")
 
@@ -181,6 +307,21 @@ def run_oracle_report(
         )
 
     # ------------------------------------------------------------------
+    # 4b. Incident-level metrics — the real deliverable (incident surfacing).
+    # ------------------------------------------------------------------
+    incident_metrics, incident_df = _incident_level_metrics(df)
+    metrics.update(incident_metrics)
+
+    # Per-scenario incident counts for the breakdown table.
+    inc_by_scenario: dict = {}
+    esc_by_scenario: dict = {}
+    if not incident_df.empty and "scenario_id" in incident_df.columns:
+        inc_by_scenario = incident_df.groupby("scenario_id").size().to_dict()
+        esc_by_scenario = (
+            incident_df[incident_df["is_escalated"]].groupby("scenario_id").size().to_dict()
+        )
+
+    # ------------------------------------------------------------------
     # 5. Per-scenario breakdown (only when the section-aware loader ran)
     # ------------------------------------------------------------------
     per_scenario: list[dict] = []
@@ -200,6 +341,8 @@ def run_oracle_report(
                 "n_signal_flagged": flagged,
                 "signal_recall": _safe_ratio(flagged, len(sig)),
                 "detected": bool(flagged > 0),
+                "n_incidents": int(inc_by_scenario.get(sid, 0)),
+                "n_escalated": int(esc_by_scenario.get(sid, 0)),
             })
         n_detectable = sum(1 for s in per_scenario if s["n_signal"] > 0)
         n_detected = sum(1 for s in per_scenario if s["detected"])
@@ -211,11 +354,16 @@ def run_oracle_report(
     _write_report(metrics, output_path)
     logger.info(
         "Oracle report: anomaly P=%.3f R=%.3f F1=%.3f | recall@k=%.3f | "
+        "incidents %s/%s escalated (precision=%.3f, signal_recall=%.3f) | "
         "scenario detection %s/%s — full report at %s",
         metrics.get("anomaly_precision", 0.0),
         metrics.get("anomaly_recall", 0.0),
         metrics.get("anomaly_f1", 0.0),
         metrics.get("ranking_recall_at_k", 0.0),
+        metrics.get("n_incidents_escalated", "-"),
+        metrics.get("n_incidents", "-"),
+        metrics.get("escalated_incident_precision", 0.0),
+        metrics.get("incident_signal_recall", 0.0),
         metrics.get("scenarios_detected", "-"),
         metrics.get("scenarios_total", "-"),
         output_path,

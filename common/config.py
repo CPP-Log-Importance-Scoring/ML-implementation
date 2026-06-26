@@ -495,6 +495,42 @@ SEVERITY_GATE_BENIGN_PATTERNS: list = [
     r"within bounds", r"within limits", r"within normal",
     r"no alerts", r"no anomal", r"no errors", r"no issues",
     r"check passed", r"all clear",
+    # Routine status assertions that the generator/vendor sometimes tags
+    # CRITICAL (e.g. "OSPF adjacency stable on downlink - cost 12") — a clean-day
+    # false-escalation source (verified 2026-06-24). "stable" asserts normalcy.
+    r"\bstable\b", r"\bestablished\b", r"adjacency (?:up|stable)",
+]
+
+# ---------------------------------------------------------------------------
+# Severity fault promotion (the inverse of the credibility gate)
+# ---------------------------------------------------------------------------
+# The gate above fixes OVER-tagging (benign lines tagged CRITICAL). The opposite
+# failure is just as common: genuine faults UNDER-tagged. The synthetic loader
+# parses an OOM / PROTOCOL_STARVATION / SPLIT_BRAIN burst — lines that say
+# "protocol frame timeout threshold exceeded", "peer unreachable",
+# "split-brain detected - dual root", "keepalive_failures=8098" — as INFO
+# (verified 2026-06-24: 32/33 STARVATION-window rows and 76/78 SPLIT_BRAIN-window
+# rows parsed INFO). Left INFO they never seed an incident or reach the escalation
+# gate, so a real CRITICAL incident is silently dropped.
+#
+# A line whose CONTENT carries an unambiguous fault indicator is promoted to a
+# credible high severity (ERROR weight = the escalation high-sev threshold) so it
+# seeds clustering and counts toward escalation — symmetric to the benign gate.
+# The final_score is lifted by the same severity delta the promotion adds, so the
+# row clears the 'ignore' label and is allowed to seed. Calibrated 2026-06-24 to
+# fire 0x on every clean day and many× inside each anomaly window. Generic
+# network-fault vocabulary; tune per vendor, same caveat as the benign lexicon.
+# A line matching a fault pattern is never also benign-gated (fault wins).
+SEVERITY_FAULT_PROMOTION_ENABLED: bool = True
+SEVERITY_FAULT_PROMOTE_WEIGHT: float = SEVERITY_WEIGHTS["ERROR"]   # 0.70 — high-sev threshold
+SEVERITY_FAULT_PATTERNS: list = [
+    r"\btimeout\b", r"timed out", r"threshold exceeded",
+    r"\bunreachable\b", r"\bfailover\b",
+    r"keepalive.{0,20}fail", r"consecutive.{0,15}fail", r"peer[_ ]?lost",
+    r"split[_ ]?brain", r"dual[_ ]?root", r"\bconflict\b", r"isolated_mode",
+    r"\bstarvation\b", r"carrier[_ ]?lost",
+    r"out of memory", r"\boom\b", r"\bsigkill\b", r"oom[_ ]?kill",
+    r"\bmismatch\b", r"drop rate increasing",
 ]
 
 # ---------------------------------------------------------------------------
@@ -563,6 +599,55 @@ INCIDENT_MIN_SEEDS: int = 10            # density floor: fewer seeds in window �
 INCIDENT_SEED_LABELS: tuple = ("medium", "critical")  # labels that seed
 INCIDENT_SEED_SCORE_MIN: float = 0.50   # final_score at/above this also seeds
 INCIDENT_SEED_SEVERITY_MIN: float = 0.70  # event_weight at/above this (ERROR+) also seeds
+
+# Severity formation path. The density floor above is tuned for DENSE medium
+# bursts (e.g. PROTOCOL_STARVATION packs many medium rows into a window), but it
+# drops a SPARSE-but-severe incident: an OOM cascade of ~24 high-severity rows at
+# ~44s spacing chains into one group yet never reaches INCIDENT_MIN_SEEDS *medium*
+# seeds, so all its severe rows fall out of every incident (measured 2026-06-24:
+# 68/81 genuine severe rows dropped by the density floor alone).
+#
+# With this enabled, a seed group also becomes an incident if it carries genuine
+# severity — reusing the escalation-gate thresholds (INCIDENT_ESCALATE_* below) so
+# a severity-formed incident is, by construction, exactly one that will surface.
+# It only ADDS incidents around severe rows; it never merges or widens existing
+# ones, so incident spans are unaffected. Set False to revert to density-only.
+INCIDENT_SEVERITY_FORMATION: bool = True
+
+# Two-tier seed gap. A genuine incident is a BURST of like rows, but a "burst"
+# means different spacing for different rows: a dense medium chain must stay tight
+# (a 3-min gap is a new incident) or unrelated all-day noise over-merges into one
+# 80-minute blob. A SEVERE cascade is sparser by nature — measured on the sim_real
+# OOM day, consecutive CRITICAL rows sit a median ~292s apart, ABOVE the 180s gap,
+# so they fragment into singletons that never form an incident and the cascade is
+# lost. So severe rows (anchors) tolerate a larger gap to the adjacent seed than
+# medium rows do: a boundary breaks into a new incident only when the gap exceeds
+# INCIDENT_SEVERE_WINDOW_SECONDS if EITHER side is severe, else INCIDENT_WINDOW_SECONDS.
+# This keeps medium chains tight while letting a sparse severe cascade stay whole.
+# Only applies when INCIDENT_SEVERITY_FORMATION is on. 600s comfortably clears the
+# measured cascade spacing without bridging genuinely separate severe incidents
+# (severe rows are rare, so a 10-min severe-to-severe bridge is unlikely on noise).
+INCIDENT_SEVERE_WINDOW_SECONDS: int = 600
+
+# --- Incident escalation gate -------------------------------------------------
+# Clustering (above) seeds broadly on `medium` density so it catches real bursts
+# that never cross a per-row score bar. The cost: a busy CLEAN day also packs
+# hundreds of `medium` rows into windows, so it forms a few medium incidents too
+# — and a "medium incident" then appears on every day, carrying no signal.
+#
+# The escalation gate adds a per-incident boolean (is_escalated) that separates a
+# genuine incident from clean-day medium noise WITHOUT touching recall or
+# clustering: every incident is still formed and stored, but only escalated ones
+# are surfaced/alerted by default. An incident escalates if it contains a real
+# severity signal — either a critical-LABELLED row (the system judged a line
+# anomalous enough to cross LABEL_MEDIUM_MAX) or a dense burst of high-SEVERITY
+# rows (the lines themselves are ERROR+). This is a ranking flag, not a filter:
+# nothing is dropped, so an under-tiered INFO anomaly still forms its incident —
+# it just won't be auto-surfaced unless it also packs high-severity rows.
+INCIDENT_ESCALATION_ENABLED: bool = True
+INCIDENT_ESCALATE_MIN_CRITICAL_ROWS: int = 1     # >= this many critical-LABEL rows → escalate
+INCIDENT_ESCALATE_HIGH_SEV_MIN: float = 0.70     # event_weight at/above this counts as high-severity
+INCIDENT_ESCALATE_HIGH_SEV_COUNT: int = 3        # >= this many high-severity rows → escalate
 
 # Legacy DBSCAN knobs — retained for backward-compat / fallback only.
 DBSCAN_EPS: float = 0.08

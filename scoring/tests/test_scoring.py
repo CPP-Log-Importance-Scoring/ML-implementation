@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 import common.config as cfg
-from scoring.importance_scorer import score
+from scoring.importance_scorer import score, apply_message_adjustments
 from scoring.incident_clusterer import cluster_incidents
 from scoring.label_mapper import map_labels
 from scoring.root_cause_engine import identify_root_causes
@@ -333,6 +333,79 @@ class TestImportanceScorer:
 # TestLabelMapper
 # ---------------------------------------------------------------------------
 
+class TestSeverityCredibilityGate:
+    """apply_message_adjustments neutralises severity for benign-content lines."""
+
+    def _df(self):
+        # Two CRITICAL-severity (event_weight 1.0) rows: one benign-content
+        # ("...- NORMAL"), one a genuine fault. Both start at the same score.
+        return pd.DataFrame({
+            "sequence_number": [1, 2],
+            "final_score": [0.8, 0.8],
+            "event_weight": [1.0, 1.0],
+            "message": [
+                "ASIC temperature: 50C - NORMAL (threshold: 55C)",
+                "memory_manager: heap at 98% - OOM imminent",
+            ],
+        })
+
+    def test_benign_line_event_weight_reverted_to_baseline(self):
+        out = apply_message_adjustments(self._df())
+        # Benign-content line: severity neutralised so downstream seeding /
+        # escalation no longer treats it as high-severity.
+        assert out.loc[0, "event_weight"] == cfg.DEFAULT_SEVERITY_WEIGHT
+        # Genuine fault line keeps its severity.
+        assert out.loc[1, "event_weight"] == 1.0
+
+    def test_benign_line_score_damped_below_genuine(self):
+        out = apply_message_adjustments(self._df())
+        assert out.loc[0, "final_score"] < out.loc[1, "final_score"]
+
+    def test_noop_without_event_weight_column(self):
+        df = self._df().drop(columns=["event_weight"])
+        out = apply_message_adjustments(df)  # must not raise
+        assert "event_weight" not in out.columns
+
+    def test_stable_status_line_is_demoted(self):
+        # "OSPF adjacency stable" tagged CRITICAL is a clean-day false-escalation
+        # source — must be demoted to baseline severity.
+        df = pd.DataFrame({
+            "sequence_number": [1], "final_score": [0.8], "event_weight": [1.0],
+            "message": ["OSPF adjacency stable on downlink_2 - cost 12"],
+        })
+        out = apply_message_adjustments(df)
+        assert out.loc[0, "event_weight"] == cfg.DEFAULT_SEVERITY_WEIGHT
+
+    def test_under_tagged_fault_is_promoted(self):
+        # A genuine fault parsed INFO (event_weight at baseline) must be promoted
+        # so it can seed clustering and reach the escalation gate.
+        df = pd.DataFrame({
+            "sequence_number": [1, 2], "final_score": [0.2, 0.2],
+            "event_weight": [cfg.DEFAULT_SEVERITY_WEIGHT, cfg.DEFAULT_SEVERITY_WEIGHT],
+            "message": [
+                "spanning_tree: protocol frame timeout threshold exceeded",
+                "stp_tick: STP timer tick instance=3 state=FORWARDING",
+            ],
+        })
+        out = apply_message_adjustments(df)
+        # Fault-content row promoted to the high-severity threshold; final_score lifted.
+        assert out.loc[0, "event_weight"] == cfg.SEVERITY_FAULT_PROMOTE_WEIGHT
+        assert out.loc[0, "final_score"] > 0.2
+        # Routine row untouched.
+        assert out.loc[1, "event_weight"] == cfg.DEFAULT_SEVERITY_WEIGHT
+
+    def test_fault_content_not_demoted_even_with_benign_words(self):
+        # Fault evidence wins: a line with both a fault token and a normalcy word
+        # must not be benign-gated below the promotion weight.
+        df = pd.DataFrame({
+            "sequence_number": [1], "final_score": [0.2],
+            "event_weight": [cfg.DEFAULT_SEVERITY_WEIGHT],
+            "message": ["peer unreachable - link no longer stable"],
+        })
+        out = apply_message_adjustments(df)
+        assert out.loc[0, "event_weight"] == cfg.SEVERITY_FAULT_PROMOTE_WEIGHT
+
+
 class TestLabelMapper:
 
     def _df(self, scores: list[float]) -> pd.DataFrame:
@@ -433,6 +506,76 @@ class TestIncidentClusterer:
         valid = result["correlation_id"].dropna()
         assert valid.str.match(r"^INC-\d{4}$").all()
 
+
+def _make_severity_cluster_df() -> pd.DataFrame:
+    """Fixture exercising the severity-formation path and two-tier gap.
+
+    Three groups, all single-system (C0000), all below INCIDENT_MIN_SEEDS so the
+    density floor alone would drop every one of them:
+      sevsparse — 4 high-severity rows (event_weight 1.0) 30s apart. Below the
+          density floor, but >= INCIDENT_ESCALATE_HIGH_SEV_COUNT high-sev rows →
+          the severity path forms it.
+      sevgap    — 3 high-severity rows 300s apart: ABOVE INCIDENT_WINDOW_SECONDS
+          (180) but below INCIDENT_SEVERE_WINDOW_SECONDS (600), so the two-tier
+          gap keeps them in ONE incident instead of fragmenting them.
+      medgap    — 3 medium rows (event_weight 0.4) 300s apart. Not severe, so the
+          tight 180s window applies → they fragment into singletons and drop.
+
+    final_score is 0.4 throughout (below INCIDENT_SEED_SCORE_MIN) so seeding is
+    driven by label/severity, not score — isolating the behavior under test.
+    """
+    base = pd.Timestamp("2024-01-01")
+    rows: list[dict] = []
+    seq = 1
+
+    def add(role, ew, t_offset, step, n):
+        nonlocal seq
+        for i in range(n):
+            rows.append({
+                "sequence_number": seq, "session_id": role,
+                "timestamp": base + pd.Timedelta(seconds=t_offset + i * step),
+                "final_score": 0.4, "centrality_score": 0.4,
+                "temporal_proximity": 0.4, "label": "medium",
+                "cluster_id": "C0000", "in_graph": True, "event_weight": ew,
+                "correlation_id": None, "is_cross_system": False, "_role": role,
+            })
+            seq += 1
+
+    add("sevsparse", 1.0, t_offset=0,    step=30,  n=4)
+    add("sevgap",    1.0, t_offset=4000, step=300, n=3)
+    add("medgap",    0.4, t_offset=9000, step=300, n=3)
+    return pd.DataFrame(rows)
+
+
+class TestIncidentClustererSeverity:
+    """Severity-formation path and two-tier gap (config INCIDENT_SEVERITY_FORMATION)."""
+
+    def test_sparse_severe_group_forms_incident_below_density_floor(self):
+        # 4 high-sev rows < INCIDENT_MIN_SEEDS: density-only would drop them.
+        result = cluster_incidents(_make_severity_cluster_df())
+        sev = result[result["_role"] == "sevsparse"]
+        assert sev["correlation_id"].notna().all()
+        assert sev["correlation_id"].nunique() == 1
+
+    def test_two_tier_gap_keeps_sparse_severe_cascade_whole(self):
+        # 3 severe rows 300s apart (>180s window, <600s severe window) → one incident.
+        result = cluster_incidents(_make_severity_cluster_df())
+        gap = result[result["_role"] == "sevgap"]
+        assert gap["correlation_id"].notna().all()
+        assert gap["correlation_id"].nunique() == 1
+
+    def test_medium_rows_at_same_spacing_still_fragment(self):
+        # Same 300s spacing but NOT severe → tight 180s window → fragment → dropped.
+        result = cluster_incidents(_make_severity_cluster_df())
+        med = result[result["_role"] == "medgap"]
+        assert med["correlation_id"].isna().all()
+
+    def test_disabling_severity_formation_reverts_to_density_only(self, monkeypatch):
+        monkeypatch.setattr(cfg, "INCIDENT_SEVERITY_FORMATION", False)
+        result = cluster_incidents(_make_severity_cluster_df())
+        # No group reaches INCIDENT_MIN_SEEDS, so density-only forms nothing.
+        assert result["correlation_id"].isna().all()
+
     def test_dbscan_label_column_not_in_returned_df(self):
         df = _make_clusterable_df()
         result = cluster_incidents(df)
@@ -511,6 +654,40 @@ class TestRootCauseEngine:
         noise = updated_df[updated_df["correlation_id"].isna()]
         assert (noise["is_root_cause"] == False).all()
         assert (noise["root_cause_confidence"] == 0.0).all()
+
+    def test_specificity_ranks_rare_fault_over_frequent_benign(self):
+        """With template_id present, a rare fault template must outrank a
+        ubiquitous benign template that has HIGHER centrality — IDF weighting."""
+        rows = []
+        seq = 1
+        base = pd.Timestamp("2024-01-01")
+
+        def add(template, final, cen, n, incident, t0):
+            nonlocal seq
+            for i in range(n):
+                rows.append({
+                    "sequence_number": seq, "session_id": "S0",
+                    "timestamp": base + pd.Timedelta(seconds=t0 + i),
+                    "temporal_proximity": 0.5, "final_score": final,
+                    "label": "medium", "centrality_score": cen,
+                    "cluster_id": "C0000", "in_graph": True,
+                    "template_id": template,
+                    "correlation_id": incident, "is_cross_system": False,
+                })
+                seq += 1
+
+        # Incident: 1 rare FAULT row (low centrality) + 5 frequent HEARTBEAT rows
+        # (high centrality). Plus 50 HEARTBEAT rows OUTSIDE the incident so the
+        # template is ubiquitous across the run → its IDF collapses.
+        add("FAULT", final=0.5, cen=0.1, n=1, incident="INC-0000", t0=0)
+        add("HEARTBEAT", final=0.5, cen=0.9, n=5, incident="INC-0000", t0=10)
+        add("HEARTBEAT", final=0.5, cen=0.9, n=50, incident=None, t0=5000)
+
+        updated_df, _ = identify_root_causes(pd.DataFrame(rows))
+        fault = updated_df[updated_df["template_id"] == "FAULT"]
+        assert fault["is_root_cause"].all(), "rare fault template must be root cause"
+        # The fault row should outrank the higher-centrality benign rows.
+        assert fault["root_cause_confidence"].iloc[0] == pytest.approx(1.0)
 
     def test_temporal_proximity_not_in_scored_logs_parquet(self, tmp_path):
         df = _make_incident_df()
