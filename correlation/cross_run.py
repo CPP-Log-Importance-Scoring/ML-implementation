@@ -106,18 +106,41 @@ def run(dry_run: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
         "Current run: %d incident(s) to correlate.", len(current_incidents)
     )
 
-    # Step 4 — assign chains via Jaccard matching
-    enriched_incidents, history_df = assign_chains(
-        current_incidents=current_incidents,
+    # Step 4 — assign chains via Jaccard matching, ESCALATED incidents only.
+    # Benign medium clusters are noise by the escalation gate's own definition;
+    # they carry only the shared benign backdrop, so letting them match would
+    # transitively bridge unrelated real chains into one (verified 2026-06-26:
+    # a string of non-escalated mediums glued the BGP and LACP chains together).
+    # They are still appended to incident_history below (chain_id=None) because
+    # the dashboard's escalation JOIN is fail-open — an incident with no history
+    # row defaults to escalated=TRUE, so dropping them would unhide clean-day
+    # noise. assign_chains also skips benign rows as historical match candidates.
+    escalated_incidents = [i for i in current_incidents if i.get("is_escalated")]
+    benign_incidents = [i for i in current_incidents if not i.get("is_escalated")]
+
+    enriched_escalated, history_df = assign_chains(
+        current_incidents=escalated_incidents,
         history_df=history_df,
         threshold=cfg.CROSS_RUN_SIMILARITY_THRESHOLD,
         lookback_hours=cfg.CROSS_RUN_LOOKBACK_HOURS,
     )
+    benign_enriched = [
+        {
+            **i,
+            "chain_id": None,
+            "precursor_incident_id": None,
+            "chain_position": 1,
+            "chain_confidence": 0.0,
+        }
+        for i in benign_incidents
+    ]
+    enriched_incidents = enriched_escalated + benign_enriched
 
     chained = [i for i in enriched_incidents if i["chain_id"]]
     logger.info(
-        "%d / %d incident(s) linked to an existing chain.",
-        len(chained), len(enriched_incidents),
+        "%d / %d escalated incident(s) linked to an existing chain "
+        "(%d benign incident(s) stored but not chained).",
+        len(chained), len(escalated_incidents), len(benign_incidents),
     )
 
     # Step 5 — elevate precursor log scores for the CURRENT run
@@ -236,6 +259,48 @@ def _incident_escalation(grp: pd.DataFrame) -> tuple[bool, str, int, int]:
     return bool(reasons), "+".join(reasons), n_critical, n_high_sev
 
 
+def _incident_fingerprint(grp: pd.DataFrame) -> frozenset:
+    """Fingerprint an incident from its DISCRIMINATIVE (fault-bearing) rows only.
+
+    Fingerprinting every row in the incident window pollutes the signature with
+    the benign backdrop (OSPF_ADJACENCY_ESTABLISHED, ROUTE_ADDED_TO,
+    SNMP_WALK_COMPLETED, SSH_SESSION_ESTABLISHED, ...) that EVERY incident on
+    every day shares. overlap_coefficient then clears its threshold on that shared
+    routine noise, so unrelated faults all chain together — verified 2026-06-26:
+    11 escalated incidents across 4 days collapsed into ONE chain.
+
+    Restricting the fingerprint to the rows that actually mark the fault yields
+    fault-aligned chains (OOM links to OOM, LACP to LACP, OSPF recurrence
+    tracked) instead of one meaningless blob.
+
+    The signal is taken in TIERS, most-specific first, because breadth re-pollutes
+    the fingerprint: including every ERROR+ row pulls in severity-promoted generic
+    lines that recur across *unrelated* faults, and those shared lines bridge
+    distinct chains back into one (verified 2026-06-26 — the broad mask still
+    collapsed ECC/OSPF/LACP/BGP into a single chain by day 4). Root-cause rows are
+    the IDF-specificity-ranked fault templates, so they discriminate cleanly.
+
+      tier 1: is_root_cause rows          (the specific fault signature)
+      tier 2: ERROR+ / critical rows      (when no root cause was identified)
+      tier 3: the whole incident          (sparse incident / legacy callers)
+    """
+    if "is_root_cause" in grp.columns:
+        rc_rows = grp[grp["is_root_cause"].fillna(False).astype(bool)]
+        if len(rc_rows):
+            return fingerprint_from_df(rc_rows)
+
+    sev_mask = pd.Series(False, index=grp.index)
+    if "event_weight" in grp.columns:
+        sev_mask |= grp["event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN
+    if "label" in grp.columns:
+        sev_mask |= grp["label"] == "critical"
+    sev_rows = grp[sev_mask]
+    if len(sev_rows):
+        return fingerprint_from_df(sev_rows)
+
+    return fingerprint_from_df(grp)  # nothing isolated — keep the whole incident
+
+
 def _build_current_incidents(
     scored_df: pd.DataFrame,
     session_df: pd.DataFrame,
@@ -296,7 +361,7 @@ def _build_current_incidents(
         seq_str = local_id.replace("INC-", "")
         global_id = f"INC-{run_date_str}-{seq_str}"
 
-        fp = fingerprint_from_df(grp)
+        fp = _incident_fingerprint(grp)
 
         # Timestamps from session_df (more reliable than scored_df)
         timestamps = pd.to_datetime(grp["timestamp"], utc=True, errors="coerce").dropna()
