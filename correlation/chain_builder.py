@@ -93,19 +93,31 @@ def assign_chains(
     history = history_df.copy()
     results: list[dict] = []
 
+    # Only ESCALATED historical incidents are valid match candidates. Benign
+    # medium incidents are stored in history (for the dashboard's fail-open
+    # escalation JOIN) but carry only shared benign-backdrop templates, so
+    # allowing them to match would transitively bridge unrelated real chains.
+    # Mutations still target `history` (returned), so chain assignments persist;
+    # `matchable` is just the candidate view. fillna(True) is fail-open: a legacy
+    # row predating the is_escalated column is treated as a valid candidate.
+    if "is_escalated" in history.columns:
+        matchable = history[history["is_escalated"].fillna(True).astype(bool)]
+    else:
+        matchable = history
+
     for curr in current_incidents:
         curr_fp: frozenset = curr["template_fingerprint"]
         curr_start: pd.Timestamp = curr["start_time"]
 
         # Determine lookback cutoff
         if pd.isnull(curr_start):
-            recent_hist = history
+            recent_hist = matchable
         else:
             cutoff = curr_start - pd.Timedelta(hours=lookback_hours)
             # Enforce temporal ordering: precursor must end before current starts
-            recent_hist = history[
-                (history["end_time"] >= cutoff) &
-                (history["end_time"] < curr_start)
+            recent_hist = matchable[
+                (matchable["end_time"] >= cutoff) &
+                (matchable["end_time"] < curr_start)
             ]
 
         if len(recent_hist) == 0:
@@ -136,10 +148,16 @@ def assign_chains(
             results.append(_no_chain(curr))
             continue
 
-        # Collect all distinct non-None, non-NaN chain_ids from matching incidents
+        # Collect all distinct non-null chain_ids from matching incidents.
+        # Guard with pd.notna(): a never-chained incident's chain_id round-trips
+        # through parquet as NaN (a float), and NaN is *truthy*, so a bare
+        # `if m["chain_id"]` lets it leak into the set. Once history holds a mix
+        # of real chain strings and NaN (run 3 onward), min(matched_chain_ids)
+        # then compares str to float and raises TypeError, killing the pipeline.
         matched_chain_ids = {
-            m["chain_id"] for m in matches
-            if m["chain_id"] and isinstance(m["chain_id"], str)
+            m["chain_id"]
+            for m in matches
+            if m["chain_id"] is not None and pd.notna(m["chain_id"])
         }
 
         if not matched_chain_ids:

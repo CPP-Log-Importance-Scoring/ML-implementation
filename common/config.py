@@ -531,6 +531,14 @@ SEVERITY_FAULT_PATTERNS: list = [
     r"\bstarvation\b", r"carrier[_ ]?lost",
     r"out of memory", r"\boom\b", r"\bsigkill\b", r"oom[_ ]?kill",
     r"\bmismatch\b", r"drop rate increasing",
+    # Power / redundancy faults. A PSU cascade is sparse-severe: one CRITICAL
+    # event plus a few "power supply N failure detected, redundancy lost" lines
+    # that the source tags INFO. Without promotion only the lone severe line
+    # survives, which (correctly) can't form an incident on its own, so the whole
+    # fault was missed (verified 2026-06-26, 5-day eval). These promote the
+    # context lines so the high-severity-density path fires. Fault-only vocab:
+    # clean days say "redundancy restored"/"PSU OK", never these.
+    r"power supply.{0,20}fail", r"redundancy[_ ]?lost", r"\bpsu[_ ]?fault",
 ]
 
 # ---------------------------------------------------------------------------
@@ -596,6 +604,16 @@ DRIFT_RATIO_FULL: float = 8.0            # ≥8× median active rate → full dr
 # incident packs many seeds into one window; clean noise spreads ~1 per window.
 INCIDENT_WINDOW_SECONDS: int = 180      # consecutive seeds within this → same incident
 INCIDENT_MIN_SEEDS: int = 10            # density floor: fewer seeds in window → not an incident
+# Absolute floor on incident SIZE (applies to the severity-formation path below).
+# An incident is, by definition, a GROUP of correlated logs — a lone severe line is
+# an alert, not an incident. The density path already requires >= INCIDENT_MIN_SEEDS
+# rows, but the severity path could previously keep a group on a single critical /
+# high-severity row (INCIDENT_ESCALATE_MIN_CRITICAL_ROWS=1), so an isolated ML
+# false-critical on a sparse day formed — and escalated — as a one-row incident
+# (the "12 single-log incidents" demo failure, 2026-06-25). Requiring >= this many
+# rows kills singletons/pairs without touching genuine cascades (the sparse OOM
+# cascade severity-formation targets has ~24 rows, far above this floor).
+INCIDENT_MIN_SIZE: int = 3              # severity-formed incident needs at least this many rows
 INCIDENT_SEED_LABELS: tuple = ("medium", "critical")  # labels that seed
 INCIDENT_SEED_SCORE_MIN: float = 0.50   # final_score at/above this also seeds
 INCIDENT_SEED_SEVERITY_MIN: float = 0.70  # event_weight at/above this (ERROR+) also seeds

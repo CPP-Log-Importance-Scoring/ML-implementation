@@ -582,6 +582,90 @@ class TestIncidentClustererSeverity:
         assert "_dbscan_label" not in result.columns
 
 
+def _make_size_floor_df(n: int, *, ew: float = 1.0, label: str = "critical") -> pd.DataFrame:
+    """A single isolated severe burst of `n` rows, 30s apart, far from anything.
+
+    Below INCIDENT_MIN_SEEDS, so it can only form via the severity path — which now
+    also requires INCIDENT_MIN_SIZE rows. Used to probe the size floor: n<MIN_SIZE
+    must form nothing; n>=MIN_SIZE must form one incident.
+    """
+    base = pd.Timestamp("2024-01-01")
+    rows = [{
+        "sequence_number": i + 1, "session_id": "burst",
+        "timestamp": base + pd.Timedelta(seconds=i * 30),
+        "final_score": 0.4, "centrality_score": 0.4, "temporal_proximity": 0.4,
+        "label": label, "cluster_id": "C0000", "in_graph": True,
+        "event_weight": ew, "correlation_id": None, "is_cross_system": False,
+    } for i in range(n)]
+    return pd.DataFrame(rows)
+
+
+class TestIncidentClustererSizeFloor:
+    """Severity-formed incidents must be GROUPS (INCIDENT_MIN_SIZE), never singletons.
+
+    Regression guard for the 2026-06-25 demo failure: isolated critical/high-sev
+    seeds on a sparse day each formed (and escalated as) a one-row incident.
+    """
+
+    def test_lone_severe_seed_forms_no_incident(self):
+        # A single high-severity critical row in isolation is an alert, not an incident.
+        result = cluster_incidents(_make_size_floor_df(1))
+        assert result["correlation_id"].isna().all()
+
+    def test_pair_of_severe_seeds_forms_no_incident(self):
+        # Two rows still below INCIDENT_MIN_SIZE (3) → no incident.
+        result = cluster_incidents(_make_size_floor_df(2))
+        assert result["correlation_id"].isna().all()
+
+    def test_triple_of_severe_seeds_forms_one_incident(self):
+        # At the floor (3 rows) the severity path still forms the incident — recall
+        # on genuine sparse-but-severe cascades is preserved.
+        result = cluster_incidents(_make_size_floor_df(3))
+        assert result["correlation_id"].notna().all()
+        assert result["correlation_id"].nunique() == 1
+
+    def test_critical_label_without_severity_does_not_anchor(self):
+        # An ML-stamped 'critical' label on benign-weight lines (event_weight below
+        # the high-sev threshold) is not a credible critical row, so even a group of
+        # them does not form via the severity path.
+        result = cluster_incidents(_make_size_floor_df(3, ew=0.1, label="critical"))
+        assert result["correlation_id"].isna().all()
+
+
+class TestIncidentClustererDeterminism:
+    """Incident formation must not depend on input row ORDER.
+
+    Regression guard for the 2026-06-25 nondeterminism (incident count wobbled
+    52<->68 on identical input): the temporal grouping sorted by timestamp only, so
+    seeds sharing a timestamp inherited whatever order the upstream merge emitted.
+    A sequence_number tie-breaker makes the result a pure function of the data.
+    """
+
+    def _df_with_timestamp_ties(self) -> pd.DataFrame:
+        # 12 seeds, but several share the exact same timestamp so ordering matters.
+        base = pd.Timestamp("2024-01-01")
+        secs = [0, 0, 0, 30, 30, 60, 90, 90, 120, 150, 180, 210]
+        return pd.DataFrame([{
+            "sequence_number": i + 1, "session_id": "s",
+            "timestamp": base + pd.Timedelta(seconds=secs[i]),
+            "final_score": 0.4, "centrality_score": 0.4, "temporal_proximity": 0.4,
+            "label": "medium", "cluster_id": "C0000", "in_graph": True,
+            "event_weight": 1.0, "correlation_id": None, "is_cross_system": False,
+        } for i in range(len(secs))])
+
+    def test_incident_assignment_is_row_order_independent(self):
+        df = self._df_with_timestamp_ties()
+        base = cluster_incidents(df.copy())
+        base_n = base["correlation_id"].dropna().nunique()
+        for seed in (1, 7, 42):
+            shuffled = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+            result = cluster_incidents(shuffled)
+            assert result["correlation_id"].dropna().nunique() == base_n
+        # Reversed order too.
+        rev = cluster_incidents(df.iloc[::-1].reset_index(drop=True))
+        assert rev["correlation_id"].dropna().nunique() == base_n
+
+
 # ---------------------------------------------------------------------------
 # TestRootCauseEngine
 # ---------------------------------------------------------------------------
