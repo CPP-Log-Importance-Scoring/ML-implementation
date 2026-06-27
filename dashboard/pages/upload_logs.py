@@ -38,6 +38,7 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
 from ui import apply_theme, render_sidebar_nav  # noqa: E402  (must be after sys.path bootstrap)
 
 from dashboard.data import db
+from dashboard.archive_utils import stage_uploads
 
 # ---------------------------------------------------------------------------
 # Page config & theme
@@ -81,17 +82,6 @@ def _make_batch_id() -> str:
     ts  = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     uid = uuid.uuid4().hex[:6]
     return f"uploads/{ts}_{uid}"
-
-
-def _stage_files(uploaded_files, batch_dir: Path) -> list[Path]:
-    """Write uploaded UploadedFile objects to the batch staging directory."""
-    batch_dir.mkdir(parents=True, exist_ok=True)
-    staged: list[Path] = []
-    for uf in uploaded_files:
-        dest = batch_dir / uf.name
-        dest.write_bytes(uf.getvalue())
-        staged.append(dest)
-    return staged
 
 
 def _detect_input_mode(staged: list[Path]) -> str:
@@ -247,8 +237,9 @@ st.markdown(
             Upload & Analyze
           </div>
           <div style='color:#94a3b8; font-size:0.88rem; margin-top:2px;'>
-            Drag in one or more <code>.log</code> or <code>.txt</code> files and run the
-            full analysis pipeline — no CLI required.
+            Drag in one or more <code>.log</code> / <code>.txt</code> files — or a
+            <code>.zip</code> / <code>.tar</code> / <code>.tar.gz</code> / <code>.tgz</code>
+            archive — and run the full analysis pipeline. No CLI required.
           </div>
         </div>
       </div>
@@ -268,9 +259,12 @@ if not job_running and not job_finished:
     st.subheader("Select log files")
 
     uploaded_files = st.file_uploader(
-        "Drop .log or .txt files here (multiple files allowed)",
+        "Drop .log / .txt files or archives here (multiple allowed)",
         accept_multiple_files=True,
-        type=["log", "txt"],
+        type=["log", "txt", "zip", "tar", "gz", "tgz"],
+        help="Individual logs or archives (.zip, .tar, .tar.gz, .tgz). "
+             "Archives are extracted automatically; nested log files are "
+             "discovered recursively.",
     )
 
     mode_choice = st.selectbox(
@@ -300,14 +294,39 @@ if not job_running and not job_finished:
         st.caption("Upload at least one file to enable analysis.")
 
     if analyze_clicked and uploaded_files:
-        # ── Stage files ──────────────────────────────────────────────────
+        # ── Stage files (plain logs and/or archives) ─────────────────────
         batch_id  = _make_batch_id()
         batch_dir = UPLOADS_ROOT / Path(batch_id).name
         try:
-            staged = _stage_files(uploaded_files, batch_dir)
+            stage_result = stage_uploads(uploaded_files, batch_dir)
         except Exception as exc:
             st.error(f"Failed to stage uploaded files: {exc}")
             st.stop()
+
+        staged = stage_result.staged_files
+
+        # Surface per-archive warnings/errors without aborting the whole batch.
+        for _err in stage_result.errors:
+            st.error(_err)
+        for _warn in stage_result.warnings:
+            st.warning(_warn)
+
+        if not staged:
+            st.error(
+                "No analysable .log/.txt files were found in your upload. "
+                "Check that archives contain log files and are not "
+                "password-protected or corrupted."
+            )
+            st.stop()
+
+        if stage_result.archive_count:
+            st.info(
+                f"Extracted {stage_result.extracted_log_count:,} log file(s) "
+                f"from {stage_result.archive_count} archive(s) in "
+                f"{stage_result.elapsed_seconds:.2f}s."
+                + (f" Rejected {stage_result.rejected_unsafe_count} unsafe "
+                   "archive entr(ies)." if stage_result.rejected_unsafe_count else "")
+            )
 
         # ── Resolve parsing mode ──────────────────────────────────────────
         _mode_map = {
@@ -350,9 +369,14 @@ if st.session_state.job_status == "running":
 
     info_col, meta_col = st.columns([2, 1])
     with info_col:
+        _staged_names = st.session_state.job_staged or []
+        if len(_staged_names) > 8:
+            _staged_disp = ", ".join(_staged_names[:8]) + f" … (+{len(_staged_names) - 8} more)"
+        else:
+            _staged_disp = ", ".join(_staged_names)
         st.info(
             f"**Batch:** `{st.session_state.job_batch_id}`  \n"
-            f"**Files staged:** {', '.join(st.session_state.job_staged)}  \n"
+            f"**Files staged:** {len(_staged_names)} file(s) — {_staged_disp}  \n"
             f"**Parsing mode:** `{st.session_state.job_input_mode}`  \n"
             f"**Dry run:** {'Yes' if st.session_state.job_dry_run else 'No'}"
         )
