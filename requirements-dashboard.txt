@@ -7,4 +7,4 @@
 streamlit==1.58.0
 plotly==6.8.0              # charts (timeline / host health)
 pyvis==0.3.2              # correlation graph rendering (dashboard.components.graph_view)
-google-generativeai==0.8.6  # Gemini incident summaries (dashboard.llm_summary)
+groq>=0.11.0              # Groq incident summaries (dashboard.llm_summary)

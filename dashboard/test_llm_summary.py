@@ -1,7 +1,7 @@
 """
 test_llm_summary.py
 ===================
-Standalone tests for llm_summary.py (google-genai SDK version).
+Standalone tests for llm_summary.py (Groq SDK version).
 Runs WITHOUT Postgres or Docker.
 
 Run from project ROOT:
@@ -9,8 +9,8 @@ Run from project ROOT:
     python -m pytest dashboard/test_llm_summary.py -v
 
 Prerequisites:
-    pip install google-genai pandas pytest
-    GEMINI_API_KEY in .env (only needed for live test)
+    pip install groq pandas pytest
+    GROQ_API_KEY in .env (only needed for live test)
 """
 
 import os
@@ -255,10 +255,10 @@ class TestRegenerateSummary(unittest.TestCase):
         self.assertIn("unavailable", result.lower())
 
 
-class TestLiveGeminiAPI(unittest.TestCase):
+class TestLiveGroqAPI(unittest.TestCase):
     def setUp(self):
-        if not os.environ.get("GEMINI_API_KEY"):
-            self.skipTest("GEMINI_API_KEY not set — skipping live API test.")
+        if not os.environ.get("GROQ_API_KEY"):
+            self.skipTest("GROQ_API_KEY not set — skipping live API test.")
 
     def test_single_live_call(self):
         from dashboard.llm_summary import regenerate_summary
@@ -272,7 +272,7 @@ class TestLiveGeminiAPI(unittest.TestCase):
             "top3_logs": "IF_DOWN (0.95); OSPF_NBR_CHANGE (0.88)",
             "is_cross_system": False,
         })
-        print(f"\nLive Gemini response:\n{result}\n")
+        print(f"\nLive Groq response:\n{result}\n")
         self.assertIsInstance(result, str)
         self.assertGreater(len(result), 20)
         self.assertNotIn("unavailable", result.lower())
