@@ -356,14 +356,14 @@ with col_summary:
                         padding:1rem; font-size:0.83rem; color:#94a3b8; text-align:center;
                         margin-bottom:0.6rem;'>
               No summary cached.<br>
-              <span style='font-size:0.75rem;'>Click Regenerate below to call Gemini.</span>
+              <span style='font-size:0.75rem;'>Click Regenerate below to call Groq.</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
     if st.button("Regenerate summary", use_container_width=True):
-        with st.spinner("Calling Gemini API…"):
+        with st.spinner("Calling Groq API…"):
             template_seq = ""
             if not incident_logs.empty and "template_id" in incident_logs.columns:
                 sorted_logs = incident_logs.sort_values("timestamp")
