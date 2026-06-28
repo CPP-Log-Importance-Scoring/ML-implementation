@@ -156,17 +156,20 @@ for incident in incidents_sorted:
     else:
         dur_str = "—"
 
-    # FIX: sanitize summary so any quotes/apostrophes in LLM output
-    # cannot break the surrounding HTML block
+    # Summaries are generated on demand from Incident Detail, so most incidents
+    # won't have one cached. Show the preview only when a summary exists — no
+    # "not cached" placeholder. Sanitize so quotes/apostrophes in LLM output
+    # cannot break the surrounding HTML block.
     raw_summary = db.get_summary(cid) or ""
-    summary_preview = (raw_summary[:180] + ("…" if len(raw_summary) > 180 else "")) if raw_summary else "No summary cached for this incident."
-    # escape any HTML-breaking characters from LLM output
-    summary_preview = (summary_preview
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#39;"))
+    summary_preview = ""
+    if raw_summary:
+        summary_preview = raw_summary[:180] + ("…" if len(raw_summary) > 180 else "")
+        summary_preview = (summary_preview
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
 
     border_color = {"critical": "#DC2626", "medium": "#F59E0B", "low": "#22C55E", "ignore": "#94A3B8"}.get(label, "#94A3B8")
     cross_badge  = "<span style=\"background:#fef3c7; color:#92400e; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:700; margin-left:6px;\">⚠ CROSS-SYS</span>" if is_cross else ""
@@ -204,13 +207,17 @@ for incident in incidents_sorted:
                 + " &nbsp;&middot;&nbsp; Host: <span style=\"font-weight:600; color:#0f172a;\">" + str(host) + "</span>"
                 "</div>"
 
-                # Row 3: summary preview — content is already HTML-escaped above
-                "<div style=\"margin-top:8px; font-size:0.83rem; color:#334155; line-height:1.5; font-style:italic; border-left:3px solid #e2e8f0; padding-left:8px;\">"
-                + summary_preview
-                + "</div>"
+                # Row 3: summary preview — rendered only when a summary is cached
+                # (content is already HTML-escaped above)
+                + (
+                    "<div style=\"margin-top:8px; font-size:0.83rem; color:#334155; line-height:1.5; font-style:italic; border-left:3px solid #e2e8f0; padding-left:8px;\">"
+                    + summary_preview
+                    + "</div>"
+                    if summary_preview else ""
+                )
 
                 # Row 4: scores
-                "<div style=\"margin-top:10px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;\">"
+                + "<div style=\"margin-top:10px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;\">"
                 "<div style=\"font-size:0.75rem; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;\">"
                 "Final Score: <span style=\"color:#0f172a; font-family:IBM Plex Mono,monospace; font-size:0.8rem; font-weight:700;\">" + f"{final_score:.3f}" + "</span>"
                 "</div>"

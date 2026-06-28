@@ -357,14 +357,17 @@ with col_summary:
             <div style='background:#fafafa; border:1px dashed #e2e8f0; border-radius:10px;
                         padding:1rem; font-size:0.83rem; color:#94a3b8; text-align:center;
                         margin-bottom:0.6rem;'>
-              No summary cached.<br>
-              <span style='font-size:0.75rem;'>Click Regenerate below to call Groq.</span>
+              No summary yet.<br>
+              <span style='font-size:0.75rem;'>Click Generate below to create one with Groq.</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    if st.button("Regenerate summary", use_container_width=True):
+    # Summaries are generated on demand (not during the pipeline run). The first
+    # click creates and caches the summary; afterwards the same button regenerates.
+    _summary_btn_label = "Regenerate summary" if summary else "Generate summary"
+    if st.button(_summary_btn_label, use_container_width=True):
         with st.spinner("Calling Groq API…"):
             template_seq = ""
             if not incident_logs.empty and "template_id" in incident_logs.columns:
