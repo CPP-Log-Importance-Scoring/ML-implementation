@@ -330,29 +330,11 @@ def _step_storage(dry_run: bool) -> int:
                 incidents_df["incident_id"] = incidents_df["correlation_id"].map(_globalize_id)
                 counts["incidents"] = write_incidents(incidents_df, conn)
 
-        if not dry_run and Path(cfg.SCORED_LOGS_PATH).exists():
-            try:
-                import pandas as _pd
-                from pathlib import Path as _Path
-                from dashboard.llm_summary import (
-                    generate_all_summaries as _gen_summaries,
-                )
-
-                _scored_df = _pd.read_parquet(cfg.SCORED_LOGS_PATH)
-
-                _rc_df = _pd.DataFrame()
-                _rc_path = "data/processed/root_causes_df.parquet"
-                if _Path(_rc_path).exists():
-                    _rc_df = _pd.read_parquet(_rc_path)
-
-                _gen_summaries(_scored_df, _rc_df, batch_size=20)
-                logger.info("LLM summaries generated and cached.")
-
-            except Exception as _exc:
-                logger.warning(
-                    "LLM summary generation failed (non-fatal): %s",
-                    _exc,
-                )
+        # NOTE: LLM incident summaries are intentionally NOT generated here.
+        # They are produced on demand from the dashboard's Incident Detail page
+        # (dashboard/pages/incident_detail.py) the first time a user opens an
+        # incident, then cached in Postgres — so the pipeline never spends Groq
+        # calls on incidents nobody looks at.
 
         # ── Elasticsearch indexing (powers the dashboard Log Search page) ──
         # Non-fatal: if ES is down the pipeline still succeeds; search just

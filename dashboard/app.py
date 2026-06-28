@@ -57,7 +57,9 @@ with hero_col:
         """
         <div style='background: linear-gradient(135deg, #f8fbff 0%, #ffffff 55%, #eef6ff 100%);
                     padding: 2rem 2rem 1.4rem 2rem; border-radius: 18px; margin-bottom: 1.2rem;
-                    box-shadow: 0 10px 30px rgba(15,23,42,0.08); border: 1px solid rgba(59,130,246,0.16);'>
+                    overflow: hidden;
+                    box-shadow: 0 2px 6px rgba(15,23,42,0.07), 0 16px 32px rgba(15,23,42,0.09);
+                    border: 1.5px solid rgba(59,130,246,0.38);'>
           <div style='display:flex; align-items:center; gap:10px; margin-bottom:0.5rem;'>
             <span style='font-size:0.82rem; text-transform:uppercase; letter-spacing:0.18em; color:#2563eb;'>HPE CX Intelligence Hub</span>
           </div>
