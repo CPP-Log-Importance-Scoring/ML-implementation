@@ -47,7 +47,9 @@ def format_transition_label(template_id: str) -> str:
 
 
 # ── Back button + dropdown header ───────────────────────────────────────────
-col_back, col_title = st.columns([1.1, 8.9], vertical_alignment="top")
+# Small top spacer so the Feed button isn't clipped by the toolbar above it.
+st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
+col_back, col_title = st.columns([1.1, 8.9], vertical_alignment="center")
 with col_back:
     if st.button("← Feed", key="back_to_feed", use_container_width=True):
         st.switch_page("pages/incident_feed.py")

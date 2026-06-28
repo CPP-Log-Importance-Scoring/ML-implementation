@@ -135,7 +135,8 @@ for incident in incidents_sorted:
     duration   = incident.get("duration", 0)
     is_cross   = incident.get("is_cross_system", False)
     is_escalated = incident.get("is_escalated", True)
-    esc_reason = (incident.get("escalation_reason") or "").replace("_", " ")
+    _esc_raw   = incident.get("escalation_reason")
+    esc_reason = _esc_raw.replace("_", " ") if isinstance(_esc_raw, str) else ""
     final_score = float(incident.get("final_score") or 0.0)
     rc_conf    = float(incident.get("root_cause_confidence") or 0.0)
 
