@@ -228,15 +228,16 @@ _init_state()
 # ---------------------------------------------------------------------------
 st.markdown(
     """
-    <div style='background: linear-gradient(135deg, #0f172a 0%, #111827 45%, #1e293b 100%);
+    <div style='background: linear-gradient(135deg, #f8fbff 0%, #ffffff 55%, #eef6ff 100%);
                 padding: 1.4rem 2rem; border-radius: 14px; margin-bottom: 1.2rem;
-                border: 1px solid rgba(148,163,184,0.18);'>
+                box-shadow: 0 6px 20px rgba(15,23,42,0.06);
+                border: 1px solid rgba(59,130,246,0.16);'>
       <div style='display:flex; align-items:center; gap:10px;'>
         <div>
-          <div style='font-size:1.4rem; font-weight:800; color:#ffffff; letter-spacing:-0.02em;'>
+          <div style='font-size:1.4rem; font-weight:800; color:#0f172a; letter-spacing:-0.02em;'>
             Upload & Analyze
           </div>
-          <div style='color:#94a3b8; font-size:0.88rem; margin-top:2px;'>
+          <div style='color:#475569; font-size:0.88rem; margin-top:2px;'>
             Drag in one or more <code>.log</code> / <code>.txt</code> files — or a
             <code>.zip</code> / <code>.tar</code> / <code>.tar.gz</code> / <code>.tgz</code>
             archive — and run the full analysis pipeline. No CLI required.
