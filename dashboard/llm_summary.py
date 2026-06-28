@@ -45,13 +45,33 @@ MAX_OUTPUT_TOKENS = 1024
 _client = None
 
 
+def _read_api_key() -> str:
+    """Resolve GROQ_API_KEY from the environment, falling back to the .env file.
+
+    The project loads .env via ``dotenv_values()`` (common/env_handler.py), which
+    reads the file into a dict but does NOT populate ``os.environ``. So a plain
+    ``os.environ.get("GROQ_API_KEY")`` returns empty and summaries silently fail.
+    We therefore read os.environ first, then fall back to reading .env directly.
+    """
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        from pathlib import Path
+        from dotenv import dotenv_values
+        env_file = Path(__file__).resolve().parent.parent / ".env"
+        return (dotenv_values(env_file).get("GROQ_API_KEY") or "").strip()
+    except Exception:
+        return ""
+
+
 def _get_client():
     global _client
     if _client is None:
         try:
             from groq import Groq
 
-            api_key = os.environ.get("GROQ_API_KEY", "")
+            api_key = _read_api_key()
             if not api_key:
                 logger.warning("GROQ_API_KEY not set — LLM summaries will be unavailable.")
                 return None
