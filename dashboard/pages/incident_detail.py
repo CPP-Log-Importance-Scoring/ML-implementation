@@ -524,16 +524,3 @@ with col_summary:
                   "</div>",
                 unsafe_allow_html=True,
             )
-
-    st.divider()
-
-    # Deep links
-    st.markdown("<h3>External Integrations</h3>", unsafe_allow_html=True)
-    grafana_url = f"http://localhost:3000/d/incidents?var-incident={cid}"
-    kibana_url  = f"http://localhost:5601/app/discover#/?_g=()&_a=(query:(match_phrase:(correlation_id:'{cid}')))"
-
-    link_col1, link_col2 = st.columns(2)
-    with link_col1:
-        st.link_button("Open Grafana", grafana_url, use_container_width=True)
-    with link_col2:
-        st.link_button("Open Kibana", kibana_url, use_container_width=True)
