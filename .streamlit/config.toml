@@ -1,0 +1,12 @@
+# Streamlit configuration.
+# Defining an explicit [theme] makes the app ALWAYS render in this (light) theme
+# and stops Streamlit from auto-switching to dark based on the user's OS/browser
+# `prefers-color-scheme`. The dashboard's custom HTML uses fixed light-mode
+# colours, so locking the theme keeps everything readable.
+[theme]
+base = "light"
+primaryColor = "#1d4ed8"            # accent / links / primary buttons
+backgroundColor = "#ffffff"         # main canvas
+secondaryBackgroundColor = "#f8fafc" # cards / sidebar
+textColor = "#0f172a"               # primary text
+font = "sans serif"
