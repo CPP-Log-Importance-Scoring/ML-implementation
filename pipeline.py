@@ -354,6 +354,24 @@ def _step_storage(dry_run: bool) -> int:
                     _exc,
                 )
 
+        # ── Elasticsearch indexing (powers the dashboard Log Search page) ──
+        # Non-fatal: if ES is down the pipeline still succeeds; search just
+        # stays empty until the next run with ES up.
+        if Path(cfg.SCORED_LOGS_PATH).exists() and Path(cfg.SESSIONIZED_LOGS_PATH).exists():
+            try:
+                from storage.es_writer import index_logs as _es_index
+
+                _es_scored = pd.read_parquet(cfg.SCORED_LOGS_PATH)
+                _es_logs = pd.read_parquet(cfg.SESSIONIZED_LOGS_PATH)
+                # Globalize correlation_id so Log Search "Jump to incident"
+                # matches incidents.incident_id written above.
+                if "correlation_id" in _es_scored.columns:
+                    _es_scored = _es_scored.copy()
+                    _es_scored["correlation_id"] = _es_scored["correlation_id"].map(_globalize_id)
+                counts["es_indexed"] = _es_index(_es_scored, _es_logs)
+            except Exception as _exc:
+                logger.warning("Elasticsearch indexing failed (non-fatal): %s", _exc)
+
         conn.commit()
         logger.info(f"Postgres write counts: {counts}")
         return sum(counts.values())
