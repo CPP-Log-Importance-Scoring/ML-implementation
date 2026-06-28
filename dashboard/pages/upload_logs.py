@@ -469,15 +469,33 @@ if st.session_state.job_status in ("success", "failed"):
             else:
                 total_anomalies = db.get_anomaly_count()
             label_col_exists = "label" in df.columns
-            total_incidents = (
-                df[df["label"].isin(["medium", "critical"])].shape[0]
-                if label_col_exists else "N/A"
-            )
+
+            # Critical-only UI: surface criticals plus mediums that belong to a
+            # formed incident (non-empty correlation_id). Internal scoring and
+            # labels are untouched — low / ignore / standalone-medium rows simply
+            # aren't shown here. Revert this block to restore the full breakdown.
+            def _in_incident(series: pd.Series) -> pd.Series:
+                s = series.astype(str).str.strip().str.lower()
+                return series.notna() & ~s.isin(["", "nan", "none"])
+
+            if label_col_exists:
+                _is_crit = df["label"] == "critical"
+                _is_inc_medium = (
+                    (df["label"] == "medium") & _in_incident(df["correlation_id"])
+                    if "correlation_id" in df.columns
+                    else pd.Series(False, index=df.index)
+                )
+                _surfaced_mask = _is_crit | _is_inc_medium
+                n_critical   = int(_is_crit.sum())
+                n_inc_medium = int(_is_inc_medium.sum())
+            else:
+                _surfaced_mask = None
+                n_critical = n_inc_medium = 0
 
             m1, m2, m3 = st.columns(3)
             m1.metric("Total rows processed", f"{total_rows:,}")
             m2.metric("Anomalies detected",   total_anomalies if isinstance(total_anomalies, str) else f"{total_anomalies:,}")
-            m3.metric("Medium/Critical Logs", total_incidents if isinstance(total_incidents, str) else f"{total_incidents:,}")
+            m3.metric("Critical Logs", f"{n_critical:,}" if label_col_exists else "N/A")
 
             # ── Volume stats ─────────────────────────────────────────────
             _surfaced    = total_anomalies if isinstance(total_anomalies, int) else 0
@@ -509,26 +527,31 @@ if st.session_state.job_status in ("success", "failed"):
                 unsafe_allow_html=True,
             )
 
-            # ── Severity distribution ────────────────────────────────────
+            # ── Surfaced severity (critical-only view) ───────────────────
             if label_col_exists:
-                st.markdown("#### Severity Distribution")
-                counts = df["label"].value_counts().to_dict()
-
-                sev_cols = st.columns(len(LABEL_ORDER))
-                for col, label in zip(sev_cols, LABEL_ORDER):
-                    count = counts.get(label, 0)
-                    color = LABEL_COLORS.get(label, "#64748b")
+                st.markdown("#### Surfaced Severity")
+                _suppressed = total_rows - int(_surfaced_mask.sum())
+                _tiles = [
+                    ("critical",    n_critical,   "critical"),
+                    ("in-incident", n_inc_medium, "medium"),
+                ]
+                sev_cols = st.columns(len(_tiles))
+                for col, (caption, count, ckey) in zip(sev_cols, _tiles):
+                    color = LABEL_COLORS.get(ckey, "#64748b")
                     col.markdown(
                         f"""
                         <div style='background:{color}18; border:1px solid {color}44;
                                     border-radius:10px; padding:0.7rem 1rem; text-align:center;'>
                           <div style='font-size:1.6rem; font-weight:800; color:{color};'>{count:,}</div>
                           <div style='font-size:0.78rem; color:#475569; text-transform:uppercase;
-                                      letter-spacing:0.12em; margin-top:2px;'>{label}</div>
+                                      letter-spacing:0.12em; margin-top:2px;'>{caption}</div>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
+                st.caption(
+                    f"{_suppressed:,} lower-severity line(s) hidden from this view"
+                )
 
             # ── Critical & medium logs — what actually happened ──────────
             score_col = next(
@@ -537,15 +560,15 @@ if st.session_state.job_status in ("success", "failed"):
             )
 
             if label_col_exists:
-                flagged = df[df["label"].isin(["critical", "medium"])].copy()
+                flagged = df[_surfaced_mask].copy()
                 if score_col:
                     flagged = flagged.sort_values(score_col, ascending=False)
                 flagged = flagged.reset_index(drop=True)
 
-                st.markdown("#### Critical & Medium Logs")
+                st.markdown("#### Critical Logs")
 
                 if flagged.empty:
-                    st.info("No critical or medium-severity logs were flagged in this batch.")
+                    st.info("No critical or in-incident logs were flagged in this batch.")
                 else:
                     # Colour-code the label column
                     def _style_label(val: str) -> str:
