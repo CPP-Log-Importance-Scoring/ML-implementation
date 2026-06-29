@@ -74,6 +74,7 @@ with st.sidebar:
 
 # ── Page header ────────────────────────────────────────────────────────────
 st.markdown("<h1>Log Search & Discovery</h1>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:#475569; margin-bottom:1.5rem;'>Search through your raw log data using keywords and filters. Quickly find specific events, errors, or trace the context of an incident.</p>", unsafe_allow_html=True)
 
 # ── ES Offline Banner ───────────────────────────────────────────────────────
 if not es_ok:

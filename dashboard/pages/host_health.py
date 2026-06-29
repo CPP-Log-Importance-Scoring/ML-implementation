@@ -41,6 +41,7 @@ with st.sidebar:
 
 # ── Page header ────────────────────────────────────────────────────────────
 st.markdown("<h1>Host Health & Anomalies</h1>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:#475569; margin-bottom:1.5rem;'>Monitor the overall health and stability of your network devices. Quickly identify which systems are experiencing the most issues or unusual behavior.</p>", unsafe_allow_html=True)
 
 if not db.is_db_healthy():
     st.info(
@@ -144,7 +145,7 @@ with col_chart:
         except ImportError:
             chart_data = stats.set_index("host")[["anomaly_rate"]]
             st.bar_chart(chart_data, color="#1d4ed8")
-            
+
 with col_trend:
     st.markdown("<h2>Incident Volume Over Time</h2>", unsafe_allow_html=True)
     try:

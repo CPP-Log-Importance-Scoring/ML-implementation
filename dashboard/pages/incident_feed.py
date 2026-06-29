@@ -82,6 +82,7 @@ with st.spinner("Loading incidents…"):
         incidents = [i for i in incidents if i.get("host") in host_filter]
 
 st.markdown("<h1>Incident Feed</h1>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:#475569; margin-bottom:1.5rem;'>A real-time stream of all detected incidents across your systems. Easily review, filter, and prioritize events that need your attention.</p>", unsafe_allow_html=True)
 
 total          = len(incidents)
 critical_count = sum(1 for i in incidents if (i.get("label") or "").lower() == "critical")
