@@ -42,6 +42,40 @@ def _safe_term(field: str, value: str) -> dict:
     return {"term": {field: {"value": value}}}
 
 
+def _latest_timestamp(client) -> str | None:
+    """Return the max ``timestamp`` in the index as an ISO string, or None.
+
+    Search windows are anchored to the most recent indexed log rather than
+    wall-clock ``now`` — otherwise replayed / synthetic demo data whose
+    timestamps don't line up with the current clock (e.g. future-dated July
+    logs viewed in June) falls entirely outside ``[now-Nh, now]`` and search
+    silently returns nothing.
+    """
+    try:
+        resp = client.search(
+            index=INDEX_NAME,
+            size=0,
+            aggs={"max_ts": {"max": {"field": "timestamp"}}},
+        )
+        return resp.get("aggregations", {}).get("max_ts", {}).get("value_as_string")
+    except Exception as exc:
+        logger.warning("Could not resolve latest indexed timestamp: %s", exc)
+        return None
+
+
+def _time_filter(client, time_range_hours: int) -> dict:
+    """Build a timestamp range filter for the last ``time_range_hours``.
+
+    Anchored to the newest indexed log when available (so replayed data is
+    searchable), falling back to wall-clock ``now`` for a live/empty index.
+    """
+    hours = int(time_range_hours)
+    anchor = _latest_timestamp(client)
+    if anchor:
+        return {"range": {"timestamp": {"gte": f"{anchor}||-{hours}h", "lte": anchor}}}
+    return {"range": {"timestamp": {"gte": f"now-{hours}h", "lte": "now"}}}
+
+
 def search_logs(
     query: str,
     host: str | None = None,
@@ -94,16 +128,7 @@ def search_logs(
         query_body = {
             "bool": {
                 "must": must_clauses,
-                "filter": [
-                    {
-                        "range": {
-                            "timestamp": {
-                                "gte": f"now-{int(time_range_hours)}h",
-                                "lte": "now",
-                            }
-                        }
-                    }
-                ],
+                "filter": [_time_filter(client, time_range_hours)],
             }
         }
 
@@ -153,11 +178,7 @@ def get_log_count_by_label(time_range_hours: int = 24) -> dict:
         response = client.search(
             index=INDEX_NAME,
             size=0,
-            query={
-                "range": {
-                    "timestamp": {"gte": f"now-{int(time_range_hours)}h", "lte": "now"}
-                }
-            },
+            query=_time_filter(client, time_range_hours),
             aggs={
                 "by_label": {
                     "terms": {"field": "label.keyword", "size": 10}
