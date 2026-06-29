@@ -369,9 +369,14 @@ with col_summary:
     _summary_btn_label = "Regenerate summary" if summary else "Generate summary"
     if st.button(_summary_btn_label, use_container_width=True):
         with st.spinner("Calling Groq API…"):
+            sorted_logs = (
+                incident_logs.sort_values("timestamp")
+                if "timestamp" in incident_logs.columns
+                else incident_logs
+            )
+
             template_seq = ""
             if not incident_logs.empty and "template_id" in incident_logs.columns:
-                sorted_logs = incident_logs.sort_values("timestamp")
                 templates = sorted_logs["template_id"].dropna().tolist()
                 template_seq = " → ".join(templates[:10])
                 if len(templates) > 10:
@@ -381,10 +386,35 @@ with col_summary:
             if not root_causes.empty and "root_cause_log_id" in root_causes.columns:
                 rc_str = ", ".join(root_causes["root_cause_log_id"].dropna().astype(str).tolist())
 
+            # Duration from the (sorted) log timestamps.
+            duration_s = 0
+            if "timestamp" in sorted_logs.columns and len(sorted_logs) > 1:
+                ts = pd.to_datetime(sorted_logs["timestamp"], errors="coerce").dropna()
+                if len(ts) > 1:
+                    duration_s = int((ts.iloc[-1] - ts.iloc[0]).total_seconds())
+
+            # Top-3 highest-scoring logs — the most salient events for the model.
+            top3_logs = "N/A"
+            if "final_score" in incident_logs.columns and "template_id" in incident_logs.columns:
+                top = incident_logs.sort_values("final_score", ascending=False).head(3)
+                top3_logs = "; ".join(
+                    f"{r['template_id']} ({float(r.get('final_score', 0)):.2f})"
+                    for _, r in top.iterrows()
+                )
+
+            # incident_logs is guaranteed non-empty here (the page st.stop()-s
+            # above if it isn't), so log_count/host/duration are always real.
+            # Without these keys regenerate_summary() falls back to log_count=0
+            # and the LLM wrongly reports "no associated logs".
             incident_data = {
                 "correlation_id": cid,
+                "host": host_val,
+                "duration_seconds": duration_s,
+                "log_count": log_count,
                 "template_sequence": template_seq,
+                "top3_logs": top3_logs,
                 "root_causes": rc_str,
+                "is_cross_system": is_cross,
             }
             new_summary = regenerate_summary(cid, incident_data)
         st.rerun()
