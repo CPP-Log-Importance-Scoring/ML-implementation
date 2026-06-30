@@ -325,7 +325,7 @@ def get_host_stats(
         SELECT
             l.host,
             COUNT(DISTINCT s.correlation_id) AS incident_count,
-            SUM(CASE WHEN s.label = 'critical' THEN 1 ELSE 0 END) AS critical_count,
+            COUNT(DISTINCT CASE WHEN s.label = 'critical' THEN s.correlation_id END) AS critical_count,
             CASE
                 WHEN COUNT(l.sequence_number) = 0 THEN 0.0
                 ELSE SUM(CASE WHEN a.is_anomaly = TRUE THEN 1 ELSE 0 END)::double precision
@@ -413,7 +413,7 @@ def get_incident_count_by_hour(
         SELECT
             DATE_TRUNC('hour', l.timestamp) AS hour,
             COUNT(DISTINCT s.correlation_id) AS incident_count,
-            SUM(CASE WHEN s.label = 'critical' THEN 1 ELSE 0 END) AS critical_count
+            COUNT(DISTINCT CASE WHEN s.label = 'critical' THEN s.correlation_id END) AS critical_count
         FROM logs l
         JOIN scores s ON s.sequence_number = l.sequence_number AND s.run_id = l.run_id
         WHERE l.timestamp >= %s AND l.timestamp <= %s

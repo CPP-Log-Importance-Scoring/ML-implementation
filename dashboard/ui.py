@@ -7,7 +7,8 @@ Shared Streamlit UI helpers — theme CSS, time-window picker, status badges.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, time, timedelta
+import json
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -18,6 +19,50 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+
+# ---------------------------------------------------------------------------
+# Filter Persistence
+# ---------------------------------------------------------------------------
+
+_FILTER_STORE_FILE = _PROJECT_ROOT / "storage" / "filters.json"
+
+class _FilterEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime, date, time)):
+            return obj.isoformat()
+        return super().default(obj)
+
+def persist_filters() -> None:
+    data = {}
+    for k, v in st.session_state.items():
+        if k.startswith("_backing_"):
+            data[k] = v
+    try:
+        _FILTER_STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_FILTER_STORE_FILE, "w") as f:
+            json.dump(data, f, cls=_FilterEncoder)
+    except Exception as e:
+        print(f"Failed to save filters: {e}")
+
+def load_filters() -> None:
+    if "_filters_loaded" in st.session_state:
+        return
+    st.session_state["_filters_loaded"] = True
+    if _FILTER_STORE_FILE.exists():
+        try:
+            with open(_FILTER_STORE_FILE, "r") as f:
+                data = json.load(f)
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    for dk in ["start_date", "end_date"]:
+                        if dk in v and isinstance(v[dk], str):
+                            v[dk] = date.fromisoformat(v[dk])
+                    for tk in ["start_time", "end_time"]:
+                        if tk in v and isinstance(v[tk], str):
+                            v[tk] = time.fromisoformat(v[tk])
+                st.session_state[k] = v
+        except Exception as e:
+            print(f"Failed to load filters: {e}")
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -343,6 +388,7 @@ hr {
 
 def apply_theme() -> None:
     """Inject the shared dashboard CSS theme."""
+    load_filters()
     st.markdown(THEME_CSS, unsafe_allow_html=True)
 
 
@@ -429,10 +475,10 @@ def render_time_window(prefix: str = "time"):
     if _et not in st.session_state:
         st.session_state[_et] = _backed["end_time"]
 
-    start_date     = st.date_input("Start date",  key=_sd)
-    start_time_val = st.time_input("Start time",  key=_st, step=300)
-    end_date       = st.date_input("End date",    key=_ed)
-    end_time_val   = st.time_input("End time",    key=_et, step=300)
+    start_date     = st.date_input("Start date",  value=st.session_state[_sd], key=_sd)
+    start_time_val = st.time_input("Start time",  value=st.session_state[_st], key=_st, step=300)
+    end_date       = st.date_input("End date",    value=st.session_state[_ed], key=_ed)
+    end_time_val   = st.time_input("End time",    value=st.session_state[_et], key=_et, step=300)
 
     st.session_state[_bk] = {
         "start_date": start_date,
@@ -440,6 +486,7 @@ def render_time_window(prefix: str = "time"):
         "end_date":   end_date,
         "end_time":   end_time_val,
     }
+    persist_filters()
 
     start_dt = datetime.combine(start_date, start_time_val)
     end_dt   = datetime.combine(end_date, end_time_val)

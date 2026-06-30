@@ -31,6 +31,28 @@ st.set_page_config(
 apply_theme()
 render_sidebar_nav()
 
+_SEARCH_FILTER_BK = "_backing_search_filters"
+if _SEARCH_FILTER_BK not in st.session_state:
+    st.session_state[_SEARCH_FILTER_BK] = {
+        "host": "All",
+        "label": "All",
+        "time": 24,
+        "limit": 100,
+        "query": "",
+    }
+_sbk = st.session_state[_SEARCH_FILTER_BK]
+
+if "search_host" not in st.session_state:
+    st.session_state["search_host"] = _sbk["host"]
+if "search_label" not in st.session_state:
+    st.session_state["search_label"] = _sbk["label"]
+if "search_time" not in st.session_state:
+    st.session_state["search_time"] = _sbk["time"]
+if "search_limit" not in st.session_state:
+    st.session_state["search_limit"] = _sbk["limit"]
+if "search_query" not in st.session_state:
+    st.session_state["search_query"] = _sbk["query"]
+
 # ── Sidebar filters ────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown(
@@ -53,13 +75,20 @@ with st.sidebar:
     time_range = st.selectbox(
         "Time range",
         [1, 6, 24, 48, 168],
-        index=2,
         format_func=lambda h: f"Last {h}h" if h < 168 else "Last 7d",
         key="search_time",
     )
-    result_limit = st.slider("Max results", 10, 500, 100, step=10, key="search_limit")
+    result_limit = st.slider("Max results", 10, 500, key="search_limit")
 
     st.divider()
+
+    st.session_state[_SEARCH_FILTER_BK]["host"] = host_filter
+    st.session_state[_SEARCH_FILTER_BK]["label"] = label_filter
+    st.session_state[_SEARCH_FILTER_BK]["time"] = time_range
+    st.session_state[_SEARCH_FILTER_BK]["limit"] = result_limit
+    
+    from ui import persist_filters
+    persist_filters()
 
     # ES health indicator
     es_ok = es.is_elasticsearch_healthy()
@@ -74,6 +103,7 @@ with st.sidebar:
 
 # ── Page header ────────────────────────────────────────────────────────────
 st.markdown("<h1>Log Search & Discovery</h1>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:#475569; margin-bottom:1.5rem;'>Search through your raw log data using keywords and filters. Quickly find specific events, errors, or trace the context of an incident.</p>", unsafe_allow_html=True)
 
 # ── ES Offline Banner ───────────────────────────────────────────────────────
 if not es_ok:
@@ -113,6 +143,9 @@ searched = False
 
 if (search_clicked or (query and st.session_state.get("_last_query") != query)) and es_ok:
     st.session_state["_last_query"] = query
+    st.session_state[_SEARCH_FILTER_BK]["query"] = query
+    from ui import persist_filters
+    persist_filters()
 
     if not query.strip():
         st.warning("Enter a search query to begin.")
