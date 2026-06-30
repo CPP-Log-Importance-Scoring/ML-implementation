@@ -171,8 +171,8 @@ def _update_feed_time_filter_once(df: pd.DataFrame | None) -> None:
         try:
             ts = pd.to_datetime(df["timestamp"], errors="coerce").dropna()
             if len(ts):
-                feed_start = (ts.min() - pd.Timedelta(hours=1)).to_pydatetime()
-                feed_end   = (ts.max() + pd.Timedelta(hours=1)).to_pydatetime()
+                feed_start = ts.min().replace(hour=0, minute=0, second=0, microsecond=0).to_pydatetime()
+                feed_end   = ts.max().replace(hour=23, minute=55, second=0, microsecond=0).to_pydatetime()
         except Exception:
             pass
 
