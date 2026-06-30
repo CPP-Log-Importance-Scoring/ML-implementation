@@ -68,6 +68,8 @@ with st.sidebar:
         "severity_filter":   severity_filter,
         "cross_system_only": cross_system_only,
     }
+    from ui import persist_filters
+    persist_filters()
 
 with st.spinner("Loading incidents…"):
     incidents = db.get_incidents(

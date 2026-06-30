@@ -200,6 +200,9 @@ def _update_feed_time_filter_once(df: pd.DataFrame | None) -> None:
 
     st.session_state["_feed_updated_batch"] = batch_id
 
+    from ui import persist_filters
+    persist_filters()
+
 
 # ---------------------------------------------------------------------------
 # Session state initialisation
