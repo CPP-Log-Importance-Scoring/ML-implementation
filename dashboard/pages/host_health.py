@@ -37,7 +37,7 @@ with st.sidebar:
         "letter-spacing:0.08em; color:#64748b; padding-bottom:0.4rem;'>Filters</div>",
         unsafe_allow_html=True,
     )
-    start_dt, end_dt = render_time_window("host_health")
+    start_dt, end_dt = render_time_window("global")
 
 # ── Page header ────────────────────────────────────────────────────────────
 st.markdown("<h1>Host Health & Anomalies</h1>", unsafe_allow_html=True)

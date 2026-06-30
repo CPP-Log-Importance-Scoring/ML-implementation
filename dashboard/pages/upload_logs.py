@@ -162,7 +162,7 @@ def _update_feed_time_filter_once(df: pd.DataFrame | None) -> None:
     if batch_id and st.session_state.get("_feed_updated_batch") == batch_id:
         return
 
-    _TIME_BK   = "_backing_feed_time"
+    _TIME_BK   = "_backing_global_time"
     _FILTER_BK = "_backing_feed_filters"
 
     feed_start = feed_end = None
@@ -187,7 +187,7 @@ def _update_feed_time_filter_once(df: pd.DataFrame | None) -> None:
         "end_date":   feed_end.date(),
         "end_time":   feed_end.time().replace(second=0, microsecond=0),
     }
-    for _k in ["feed_start_date", "feed_start_time", "feed_end_date", "feed_end_time"]:
+    for _k in ["global_start_date", "global_start_time", "global_end_date", "global_end_time"]:
         st.session_state.pop(_k, None)
 
     st.session_state[_FILTER_BK] = {

@@ -49,7 +49,7 @@ with st.sidebar:
         "letter-spacing:0.08em; color:#64748b; padding-bottom:0.4rem;\">Filters</div>",
         unsafe_allow_html=True,
     )
-    start_dt, end_dt = render_time_window("feed")
+    start_dt, end_dt = render_time_window("global")
     st.markdown("---")
     all_hosts = db.get_host_list()
     host_filter       = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
