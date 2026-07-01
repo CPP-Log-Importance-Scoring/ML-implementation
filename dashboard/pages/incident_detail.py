@@ -55,8 +55,8 @@ with col_back:
     if st.button("← Feed", key="back_to_feed", use_container_width=True):
         st.switch_page("pages/incident_feed.py")
 with col_title:
-    st.markdown("<h1 style='margin-top:0; margin-bottom:0.2rem;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='font-size:1.0rem; color:#475569; margin-bottom:0;'>Deep dive into a specific incident to understand what went wrong. View the sequence of events, potential root causes, and an AI-generated summary to help resolve the issue.</p>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top:0; margin-bottom:0.3rem;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:1.0rem; color:#475569; margin-bottom:1.1rem;'>Deep dive into a specific incident to understand what went wrong. View the sequence of events, potential root causes, and an AI-generated summary to help resolve the issue.</p>", unsafe_allow_html=True)
 
 # ── Guard: need a selected incident ─────────────────────────────────────────
 cid = st.session_state.get("selected_incident")
@@ -129,21 +129,29 @@ if "timestamp" in incident_logs.columns:
         start_val = ts.min().strftime("%d %b %Y %H:%M:%S")
         end_val   = ts.max().strftime("%H:%M:%S")
 
-cross_tag = " &nbsp;<span class='cross-system-badge'>⚠ CROSS-SYS</span>" if is_cross else ""
+cross_tag = (
+    "<span style='background:#fef9c3; color:#92400e; font-size:0.72rem; font-weight:700; "
+    "padding:2px 8px; border-radius:4px; border:1px solid #fde68a;'>⚠ CROSS-SYS</span>"
+    if is_cross else ""
+)
 
 st.markdown(
-    f"<div style='display:flex; align-items:center; gap:12px; flex-wrap:wrap; "
-    f"margin:-8px 0 1rem 0; padding: 0.5rem 0.8rem; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0;'>"
-    f"{severity_badge(worst_label, size='md')}"
-    f"<span style='font-family:\"IBM Plex Mono\",monospace; font-weight:700; font-size:1.05rem; color:#0f172a;'>{cid}</span>"
-    f"<span style='color:#cbd5e1;'>|</span>"
-    f"<span style='font-size:0.85rem; color:#475569;'><b>Hosts:</b> {host_val}</span>"
-    f"<span style='color:#cbd5e1;'>|</span>"
-    f"<span style='font-size:0.8rem; color:#64748b; font-family:\"IBM Plex Mono\",monospace;'>"
-    f"{start_val} → {end_val}</span>"
-    f"<span style='color:#cbd5e1;'>|</span>"
-    f"<span style='font-size:0.8rem; color:#64748b;'><b>Volume:</b> {log_count:,} logs</span>"
-    f"{cross_tag}"
+    f"<div style='margin:0 0 1rem 0; padding:0.75rem 1rem; background:#f8fafc; "
+    f"border-radius:8px; border:1px solid #e2e8f0;'>"
+    # Row 1 — identity
+    f"<div style='display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:0.4rem;'>"
+    f"  {severity_badge(worst_label, size='md')}"
+    f"  <span style='font-family:\"IBM Plex Mono\",monospace; font-weight:700; font-size:1.05rem; color:#0f172a;'>{cid}</span>"
+    f"  {cross_tag}"
+    f"</div>"
+    # Row 2 — metadata
+    f"<div style='display:flex; align-items:center; gap:16px; flex-wrap:wrap; font-size:0.82rem; color:#475569;'>"
+    f"  <span><b>Hosts:</b> {host_val}</span>"
+    f"  <span style='color:#cbd5e1;'>|</span>"
+    f"  <span style='font-family:\"IBM Plex Mono\",monospace; color:#64748b;'>{start_val} → {end_val}</span>"
+    f"  <span style='color:#cbd5e1;'>|</span>"
+    f"  <span><b>Volume:</b> {log_count:,} logs</span>"
+    f"</div>"
     f"</div>",
     unsafe_allow_html=True,
 )
