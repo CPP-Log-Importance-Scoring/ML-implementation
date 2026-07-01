@@ -17,12 +17,16 @@ degree
     Raw node degree from graph.degree[v]. Stored as int.
 
 betweenness_centrality
-    k=50 approximation for performance; exact betweenness is O(n³).
-    NetworkX normalised=True already divides by possible path count.
+    Distance = 1/weight (co-occurrence weight is affinity; NetworkX expects
+    path cost). Exact below BETWEENNESS_LARGE_GRAPH_THRESHOLD nodes, k-pivot
+    approximation (k=BETWEENNESS_K) above. normalised=True divides by
+    possible path count.
 
 pagerank  (used as centrality_score)
-    alpha=GRAPH_PAGERANK_ALPHA=0.85. Min-max normalised to [0,1].
-    Degenerate case (single node or all-equal scores) → 0.5 instead of 0.0.
+    Weighted by PMI (frequency-corrected association) so centrality means
+    "structurally implicated", not "frequent". alpha=GRAPH_PAGERANK_ALPHA.
+    Min-max normalised to [0,1]; degenerate case (single node or all-equal
+    scores) → 0.5 instead of 0.0.
 
 Capped templates (outside GRAPH_MAX_NODES)
     centrality_score = global mean of in-graph PageRank values
@@ -34,6 +38,7 @@ Capped templates (outside GRAPH_MAX_NODES)
 
 from __future__ import annotations
 
+import gc
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -74,16 +79,36 @@ def compute_centrality(
         global_mean_centrality = 0.5
         global_mean_betweenness = 0.5
     else:
-        # k approximation — exact betweenness is O(n³), k=50 keeps it fast
+        # NetworkX interprets betweenness edge weight as *distance* (path
+        # cost), so strongly co-occurring templates must be CLOSE, not far:
+        # use 1/weight. Passing weight="weight" directly inverts the metric.
+        for _u, _v, _d in graph.edges(data=True):
+            _d["distance"] = 1.0 / (_d.get("weight", 0.0) + 1e-10)
+
+        # Exact betweenness below the size threshold, k-pivot approximation
+        # above it (exact is O(V·E); see config).
+        _bw_k = (
+            None
+            if len(graph) <= cfg.BETWEENNESS_LARGE_GRAPH_THRESHOLD
+            else min(cfg.BETWEENNESS_K, len(graph))
+        )
         bw_raw = nx.betweenness_centrality(
             graph,
-            weight="weight",
+            weight="distance",
             normalized=True,
-            k=min(50, len(graph)),
+            k=_bw_k,
         )
 
+        # PageRank weighted by PMI: frequency-corrected association, so hub
+        # status means "structurally implicated", not merely "common chatter".
+        # Raw co-occurrence weight made the most frequent routine templates
+        # the most central. Fall back to raw weight when PMI is degenerate
+        # (all zero — possible on tiny graphs).
+        _has_pmi = any(d.get("pmi", 0.0) > 0.0 for _, _, d in graph.edges(data=True))
         pr_raw = nx.pagerank(
-            graph, alpha=cfg.GRAPH_PAGERANK_ALPHA, weight="weight"
+            graph,
+            alpha=cfg.GRAPH_PAGERANK_ALPHA,
+            weight="pmi" if _has_pmi else "weight",
         )
 
         # Min-max normalise PageRank to [0,1]; degenerate → 0.5 not 0.0
@@ -112,13 +137,22 @@ def compute_centrality(
     score_lookup: dict = {}
 
     for template in included_templates:
+        centrality = pr_norm.get(template, global_mean_centrality)
+        betweenness = bw_norm.get(template, global_mean_betweenness)
         score_lookup[template] = {
-            "centrality_score": pr_norm.get(template, global_mean_centrality),
+            "centrality_score": centrality,
             "degree": int(graph.degree[template]),
-            "betweenness": bw_norm.get(template, global_mean_betweenness),
+            "betweenness": betweenness,
             "in_graph": True,
             "cluster_id": graph.nodes[template].get("cluster_id", "C0000"),
         }
+        # Annotate the graph node too. The JSON exporter and dashboard read
+        # centrality off node attributes (graph.nodes[t]["centrality_score"]),
+        # which build_graph never sets — so without this every exported node
+        # falls back to the 0.0 default. Scores still flow to graph_scores_df
+        # below; this just adds the graph-side copy the visualization path needs.
+        graph.nodes[template]["centrality_score"] = centrality
+        graph.nodes[template]["betweenness"] = betweenness
 
     for template in all_templates:
         if template not in score_lookup:
@@ -152,28 +186,46 @@ def compute_centrality(
     )
 
     # Step 4 — correlated_log_ids per row
-    # For each row: find other logs in the same session whose template is a
-    # graph-neighbour of this row's template; return their sequence_numbers
-    # as strings. Empty list for capped templates or templates with no edges.
+    # All rows with the same (session_id, template_id) get the same result,
+    # so compute at that level (~session*template entries) instead of per-row
+    # (35K+ Series allocations via apply). Much lower peak memory.
     session_tmpl_to_seqnums: dict = (
         df.groupby(["session_id", "template_id"])["sequence_number"]
         .apply(list)
         .to_dict()
     )
 
-    def _correlated(row: pd.Series) -> list:
-        if not score_lookup[row["template_id"]]["in_graph"]:
-            return []
-        neighbours = set(graph.neighbors(row["template_id"]))
-        result: list = []
-        for neighbour in neighbours:
-            key = (row["session_id"], neighbour)
-            result.extend(
-                str(s) for s in session_tmpl_to_seqnums.get(key, [])
-            )
-        return result
+    # Pre-compute neighbor sets once per in-graph template
+    _neighbor_cache: dict = {}
+    for tid in included_templates:
+        if graph.has_node(tid):
+            _neighbor_cache[tid] = set(graph.neighbors(tid))
 
-    df["correlated_log_ids"] = df.apply(_correlated, axis=1)
+    # Build lookup at (session_id, template_id) level
+    # Cap at 20 entries per list — this column is explainability metadata,
+    # not used in scoring. Uncapped lists cause multi-GB memory bloat.
+    _MAX_CORRELATED = 20
+    _corr_lookup: dict = {}
+    _empty_list: list = []
+    for (sid, tid), _seqnums in session_tmpl_to_seqnums.items():
+        if tid not in _neighbor_cache:
+            _corr_lookup[(sid, tid)] = _empty_list
+            continue
+        result: list = []
+        for nbr in _neighbor_cache[tid]:
+            result.extend(
+                str(s) for s in session_tmpl_to_seqnums.get((sid, nbr), [])
+            )
+            if len(result) >= _MAX_CORRELATED:
+                result = result[:_MAX_CORRELATED]
+                break
+        _corr_lookup[(sid, tid)] = result
+
+    # Map back to rows via tuple key (vectorized dict lookup, no apply)
+    _keys = list(zip(df["session_id"], df["template_id"]))
+    df["correlated_log_ids"] = [_corr_lookup.get(k, _empty_list) for k in _keys]
+    del _keys, _corr_lookup, _neighbor_cache, session_tmpl_to_seqnums
+    gc.collect()
 
     # Step 5 — in_sequence placeholder; sequence_engine updates this column
     df["in_sequence"] = False

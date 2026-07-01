@@ -7,6 +7,7 @@ from psycopg2 import sql
 from psycopg2.extras import Json, execute_values
 
 from common.config import DB_URL
+from common.utils import worst_label
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 PROCESSED_DIR = Path("data/processed")
@@ -83,20 +84,37 @@ def _normalize_df(df: pd.DataFrame, columns: Iterable[str]):
 
     ordered = [c for c in columns if c in normalized.columns]
 
+    # Convert pandas NaN/NaT to Python None so they are written as SQL NULL.
+    # Without this, a float NaN sent to a nullable INTEGER column (e.g. an
+    # unassigned chain_position) makes Postgres attempt NaN→int and raise
+    # "integer out of range" (error 22003) rather than inserting NULL.
+    for c in ordered:
+        col = normalized[c]
+        if col.isna().any():
+            normalized[c] = col.astype(object).where(col.notna(), None)
+
     return normalized[ordered]
 
 
+# Upsert conflict keys per table. The per-log tables use a COMPOSITE key
+# (run_id, sequence_number) so successive batches accumulate instead of
+# overwriting on a bare sequence_number collision. incidents/incident_history
+# key on a globally-unique incident_id (INC-<run_id>-<NNNN>).
 _TABLE_KEY_MAP: dict = {
-    "logs": "sequence_number",
-    "features": "sequence_number",
-    "anomalies": "sequence_number",
-    "scores": "sequence_number",
-    "incidents": "incident_id",
+    "logs": ["run_id", "sequence_number"],
+    "features": ["run_id", "sequence_number"],
+    "anomalies": ["run_id", "sequence_number"],
+    "scores": ["run_id", "sequence_number"],
+    "incidents": ["incident_id"],
+    "incident_history": ["incident_id"],
+    "summaries": ["correlation_id"],
 }
 
 
-def _upsert_key_for_table(table_name: str) -> str:
-    return _TABLE_KEY_MAP.get(table_name, "sequence_number")
+def _upsert_key_for_table(table_name: str) -> list:
+    """Return the list of conflict-key columns for a table."""
+    key = _TABLE_KEY_MAP.get(table_name, "sequence_number")
+    return key if isinstance(key, list) else [key]
 
 
 def write_dataframe(
@@ -120,9 +138,9 @@ def write_dataframe(
 
         use_df = _normalize_df(df, table_cols)
 
-        key_col = _upsert_key_for_table(table_name)
+        key_cols = _upsert_key_for_table(table_name)
 
-        if key_col == "log_id":
+        if "log_id" in key_cols:
             use_df = _ensure_log_id(use_df)
 
         insert_cols = [
@@ -132,7 +150,7 @@ def write_dataframe(
 
         update_cols = [
             c for c in insert_cols
-            if c != key_col
+            if c not in key_cols
         ]
 
         assignments = [
@@ -151,7 +169,7 @@ def write_dataframe(
             """
             INSERT INTO {table} ({columns})
             VALUES %s
-            ON CONFLICT ({key_col})
+            ON CONFLICT ({key_cols})
             DO UPDATE SET {updates}
             """
         ).format(
@@ -160,7 +178,9 @@ def write_dataframe(
                 sql.Identifier(c)
                 for c in insert_cols
             ),
-            key_col=sql.Identifier(key_col),
+            key_cols=sql.SQL(", ").join(
+                sql.Identifier(c) for c in key_cols
+            ),
             updates=sql.SQL(", ").join(assignments),
         )
 
@@ -193,7 +213,6 @@ def write_dataframe(
 def write_logs(df, conn=None):
     return write_dataframe(df, "logs", conn)
 
-
 def write_features(df, conn=None):
     return write_dataframe(df, "features", conn)
 
@@ -208,6 +227,44 @@ def write_scores(df, conn=None):
 
 def write_incidents(df, conn=None):
     return write_dataframe(df, "incidents", conn)
+
+
+def write_incident_history(df, conn=None):
+    """Upsert incident_history rows (keyed on incident_id)."""
+    return write_dataframe(df, "incident_history", conn)
+
+
+def query_incident_history(
+    lookback_hours: int = 72,
+    conn=None,
+) -> "pd.DataFrame":
+    """Fetch recent incident_history rows from Postgres.
+
+    Falls back to an empty DataFrame if the table does not exist yet.
+    """
+    import pandas as _pd
+
+    owned_conn = conn is None
+    conn = get_connection(conn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT *
+                FROM incident_history
+                WHERE end_time >= NOW() - INTERVAL '%s hours'
+                ORDER BY end_time DESC
+                """,
+                (lookback_hours,),
+            )
+            rows = cur.fetchall()
+            cols = [desc[0] for desc in cur.description]
+        return _pd.DataFrame(rows, columns=cols)
+    except Exception:
+        return _pd.DataFrame()
+    finally:
+        if owned_conn:
+            conn.close()
 
 
 # =====================================
@@ -311,8 +368,8 @@ def load_pipeline_outputs():
         )
         
         # Handle both correlation_id (old) and incident_id (new)
-        if "correlation_id" in scores_df.columns and "incident_id" not in scores_df.columns:
-            scores_df = scores_df.rename(columns={"correlation_id": "incident_id"})
+        if "incident_id" in scores_df.columns and "correlation_id" not in scores_df.columns:
+            scores_df = scores_df.rename(columns={"incident_id": "correlation_id"})
 
         write_scores(scores_df, conn)
 
@@ -338,7 +395,7 @@ def load_pipeline_outputs():
                     start_time=("timestamp", "min"),
                     end_time=("timestamp", "max"),
                     log_count=("log_id", "count"),
-                    label=("label", "max"),
+                    label=("label", worst_label),
                 )
                 .reset_index()
             )

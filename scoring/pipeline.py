@@ -52,7 +52,8 @@ def run_scoring_pipeline(
     Saves data/processed/scored_logs_df.parquet and
     data/processed/root_causes_df.parquet via identify_root_causes().
     """
-    from scoring.importance_scorer import score
+    import common.config as cfg
+    from scoring.importance_scorer import score, apply_message_adjustments
     from scoring.label_mapper import map_labels
     from scoring.incident_clusterer import cluster_incidents
     from scoring.root_cause_engine import identify_root_causes
@@ -62,6 +63,34 @@ def run_scoring_pipeline(
     anomaly_df = load_parquet(anomaly_path)
     graph_scores_df = load_parquet(graph_path)
     scored_df = score(features_df, anomaly_df, graph_scores_df)
+
+    # Message-aware corrections: damp recovery/all-clear lines and floor genuine
+    # onset markers so onset outranks recovery and benign heartbeats stop
+    # crossing into "critical". score() only sees features_df (no message text),
+    # so we attach message here from the sessionized logs, adjust, then drop it.
+    sessionized = load_parquet(cfg.SESSIONIZED_LOGS_PATH)
+    scored_df = scored_df.merge(
+        sessionized[["sequence_number", "message"]],
+        on="sequence_number", how="left",
+    )
+    scored_df = apply_message_adjustments(scored_df)
+    scored_df = scored_df.drop(columns=["message"])
+
+    # Component event-rate drift: deterministic, model-free corroborating signal
+    # that lifts gradual cascades (no burst signature) the IsolationForest misses.
+    # Additive on final_score — existing ML/graph/severity weights are unchanged.
+    if cfg.SCORING_DRIFT_ENABLED:
+        from scoring.drift_scorer import compute_drift_scores
+        drift = compute_drift_scores(sessionized)
+        scored_df = scored_df.merge(drift, on="sequence_number", how="left")
+        scored_df["drift_score"] = scored_df["drift_score"].fillna(0.0)
+        n_lifted = int((scored_df["drift_score"] > 0).sum())
+        scored_df["final_score"] = (
+            scored_df["final_score"] + cfg.SCORING_DRIFT_WEIGHT * scored_df["drift_score"]
+        ).clip(0.0, 1.0)
+        scored_df = scored_df.drop(columns=["drift_score"])
+        logger.info("Drift term applied to %d rows (weight=%.2f).",
+                    n_lifted, cfg.SCORING_DRIFT_WEIGHT)
 
     logger.info("Scoring step 2/4: mapping labels")
     scored_df = map_labels(scored_df)

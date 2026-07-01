@@ -5,12 +5,13 @@ __pycache__/
 
 # Virtual environment
 venv/
+.venv/
 
 # VS Code (optional)
 .vscode/
 
-# Data files (future)
-data/
+# Data files (future) — anchored to repo root so dashboard/data/ stays tracked
+/data/
 *.log
 *.parquet
 
@@ -21,6 +22,12 @@ AGENTS.md
 
 test_summary.py
 
-ml/model_store/*.pkl
-ml/model_store/*.json
-ml/model_store/retrain_state.json
+evaluation/results/oracle_report.txt
+
+# Model artifacts (regenerable). Whole dir, recursively — the old
+# ml/model_store/*.pkl globs were non-recursive and missed _archive/**,
+# which let ~70 model binaries leak into `git add -A`.
+ml/model_store/
+
+.claude
+docs/

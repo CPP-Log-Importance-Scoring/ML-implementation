@@ -1,0 +1,49 @@
+# =============================================================================
+# Dataset profile: Kubernetes / Linux server logs
+# Purpose: PROFILE SWITCHING TEST — used by QA tests to verify that switching
+#          DATASET_PROFILE at runtime selects a completely different alias set,
+#          proving the fix works for real foreign datasets.
+# =============================================================================
+
+profile_name: kubernetes_linux
+
+service_aliases:
+  # Kubernetes node-level daemons
+  kubelet:          RUNTIME
+  containerd:       RUNTIME
+  dockerd:          RUNTIME
+
+  # Linux security & identity
+  auditd:           AUDIT
+  sshd:             SYSTEM      # same name as HPE, same canonical label — stable
+  sudo:             SYSTEM
+
+  # Linux core
+  kernel:           SYSTEM
+  journald:         SYSTEM
+  systemd:          SYSTEM
+  cron:             SYSTEM
+
+  # Kubernetes networking
+  kube-proxy:       NETWORK
+  flannel:          NETWORK
+  calico-node:      NETWORK
+
+  # Kubernetes control plane
+  kube-apiserver:   CONTROL_PLANE
+  kube-scheduler:   CONTROL_PLANE
+  kube-controller:  CONTROL_PLANE
+  etcd:             CONTROL_PLANE
+
+  # Observability
+  prometheus:       MONITORING
+  grafana:          MONITORING
+  alertmanager:     MONITORING
+
+noise_services:
+  - node_exporter        # Prometheus node exporter — fires every 15s
+  - kube-state-metrics   # Kubernetes state emitter — fires every 30s
+  - cadvisor             # Container resource usage — fires every 10s
+  - metrics-server       # HPA metrics — fires every 60s
+  - liveness-probe       # Kubernetes liveness probes
+  - readiness-probe      # Kubernetes readiness probes

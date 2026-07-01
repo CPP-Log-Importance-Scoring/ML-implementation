@@ -12,7 +12,12 @@ import pandas as pd
 import pytest
 
 from parsing.sessionizer import _assign_sessions, _derive_event_action, REQUIRED_OUTPUT_COLUMNS
-from common.config import SESSION_GAP_SECONDS, DEFAULT_SOURCE_TYPE
+from common.config import (
+    SESSION_GAP_SECONDS,
+    SESSION_MAX_DURATION_SECONDS,
+    SESSION_MAX_EVENTS,
+    DEFAULT_SOURCE_TYPE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -44,18 +49,59 @@ def test_session_boundary_different_sessions():
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — Session continuity: same host, gap < threshold → same session_id
+# Test 2 — Session continuity: same host, small gap (under gap + duration caps)
+#          → same session_id
 # ---------------------------------------------------------------------------
 
 def test_session_continuity_same_session():
     t0 = _base_ts()
-    t1 = t0 + timedelta(seconds=SESSION_GAP_SECONDS - 1)
+    t1 = t0 + timedelta(seconds=60)  # well under SESSION_GAP_SECONDS and the duration cap
     df = _make_df([
         {"host": "sw-01", "timestamp": t0, "template_id": "PORT_DOWN", "service": "PORT"},
         {"host": "sw-01", "timestamp": t1, "template_id": "PORT_UP",   "service": "PORT"},
     ])
     result = _assign_sessions(df)
     assert result["session_id"].iloc[0] == result["session_id"].iloc[1]
+
+
+# ---------------------------------------------------------------------------
+# Test 2b — Duration cap: a steady stream with small gaps still splits once it
+#           spans SESSION_MAX_DURATION_SECONDS, instead of forming one session.
+# ---------------------------------------------------------------------------
+
+def test_session_duration_cap_splits_steady_stream():
+    t0 = _base_ts()
+    # 40 events, 60s apart → spans ~39 min with no gap ever exceeding the
+    # inactivity threshold; the duration cap must still break it up.
+    rows = [
+        {"host": "sw-01", "timestamp": t0 + timedelta(seconds=60 * i),
+         "template_id": "HEARTBEAT", "service": "SYS"}
+        for i in range(40)
+    ]
+    result = _assign_sessions(_make_df(rows))
+    n_sessions = result["session_id"].nunique()
+    assert n_sessions > 1, "duration cap should split a long steady stream"
+    # Each session must stay within the duration cap.
+    spans = result.assign(ts=pd.to_datetime(result["timestamp"])).groupby("session_id")["ts"]
+    max_span = (spans.max() - spans.min()).dt.total_seconds().max()
+    assert max_span <= SESSION_MAX_DURATION_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# Test 2c — Size cap: a burst of identical-time events splits at SESSION_MAX_EVENTS.
+# ---------------------------------------------------------------------------
+
+def test_session_size_cap_splits_burst():
+    t0 = _base_ts()
+    n = SESSION_MAX_EVENTS + 5
+    rows = [
+        {"host": "sw-01", "timestamp": t0 + timedelta(milliseconds=i),
+         "template_id": "BURST", "service": "SYS"}
+        for i in range(n)
+    ]
+    result = _assign_sessions(_make_df(rows))
+    assert result["session_id"].nunique() >= 2
+    assert result.groupby("session_id").size().max() <= SESSION_MAX_EVENTS
 
 
 # ---------------------------------------------------------------------------

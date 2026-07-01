@@ -48,6 +48,8 @@ from common.config import (
     COLD_START_FULL_CONFIDENCE_THRESHOLD,
     ANOMALY_SCORE_THRESHOLD,
     ANOMALY_DYNAMIC_K,
+    ANOMALY_FLAG_MODE,
+    ANOMALY_CONTAMINATION,
 )
 from common.logger import get_logger
 from common.utils import load_parquet, save_parquet, validate_schema
@@ -100,9 +102,23 @@ def _train_model(features_df: pd.DataFrame) -> Pipeline:
     ])
     pipeline.fit(features_df[IF_FEATURE_COLUMNS])
     pipeline.n_samples_seen_ = len(features_df)
+
+    # Persist a score calibration from the TRAINING distribution so inference
+    # batches are mapped through a fixed reference instead of their own
+    # min-max. Per-batch min-max guarantees some row scores 1.0 even on a
+    # fully healthy batch and makes scores incomparable across runs. Robust
+    # percentiles so a single training outlier can't stretch the range.
+    raw_train = pipeline.decision_function(features_df[IF_FEATURE_COLUMNS])
+    pipeline.calibration_ = {
+        "raw_min": float(np.quantile(raw_train, 0.005)),
+        "raw_max": float(np.quantile(raw_train, 0.995)),
+    }
+
     logger.info(
         f"Trained IsolationForest pipeline on {len(features_df):,} samples, "
-        f"{len(IF_FEATURE_COLUMNS)} features."
+        f"{len(IF_FEATURE_COLUMNS)} features "
+        f"(calibration raw range [{pipeline.calibration_['raw_min']:.4f}, "
+        f"{pipeline.calibration_['raw_max']:.4f}])."
     )
     return pipeline
 
@@ -168,19 +184,43 @@ def detect(
     # ------------------------------------------------------------------
     X = clean[IF_FEATURE_COLUMNS]
     raw = pipeline.decision_function(X)           # higher = more normal
-    raw_min, raw_max = float(raw.min()), float(raw.max())
-    if raw_max > raw_min:
-        isolation_score = 1.0 - (raw - raw_min) / (raw_max - raw_min)
+
+    # Prefer the calibration captured at training time: it keeps scores
+    # comparable across batches/runs and lets a healthy batch score uniformly
+    # low. Per-batch min-max is only the fallback for models saved before
+    # calibration existed (or a degenerate calibration range).
+    cal = getattr(pipeline, "calibration_", None)
+    if cal and cal["raw_max"] > cal["raw_min"]:
+        isolation_score = np.clip(
+            1.0 - (raw - cal["raw_min"]) / (cal["raw_max"] - cal["raw_min"]),
+            0.0,
+            1.0,
+        )
+        logger.info(
+            "Isolation scores mapped via training calibration "
+            f"[{cal['raw_min']:.4f}, {cal['raw_max']:.4f}]."
+        )
     else:
-        # All scores identical — no anomaly signal from IF; fall back to midpoint.
-        isolation_score = np.full(len(clean), 0.5, dtype=float)
+        raw_min, raw_max = float(raw.min()), float(raw.max())
+        if raw_max > raw_min:
+            isolation_score = 1.0 - (raw - raw_min) / (raw_max - raw_min)
+            logger.warning(
+                "No training calibration on model — falling back to per-batch "
+                "min-max normalisation (scores not comparable across runs)."
+            )
+        else:
+            # All scores identical — no anomaly signal from IF; fall back to midpoint.
+            isolation_score = np.full(len(clean), 0.5, dtype=float)
 
     # ------------------------------------------------------------------
-    # Step 4 — normalise zscore_base to [0, 1]
+    # Step 4 — normalise zscore_base to [0, 1], direction-agnostic
     # ------------------------------------------------------------------
+    # |z| so a template that suddenly goes quiet (z < 0, e.g. a dying
+    # heartbeat) scores as anomalous as one that spikes. The previous
+    # (z+5)/10 mapping sent z=-5 to 0.0 — the least anomalous value.
     zscore_norm: np.ndarray = (
-        clean["zscore_base"].clip(-5.0, 5.0).values + 5.0
-    ) / 10.0
+        clean["zscore_base"].clip(-5.0, 5.0).abs().values
+    ) / 5.0
 
     # ------------------------------------------------------------------
     # Step 5 — confidence-scaled combined score
@@ -194,19 +234,44 @@ def detect(
     )
 
     # ------------------------------------------------------------------
-    # Step 6 — anomaly flag (dynamic threshold: mean + k × std)
+    # Step 6 — anomaly flag
     # ------------------------------------------------------------------
     _score_std = float(combined_score.std())
-    _threshold = (
-        float(combined_score.mean()) + ANOMALY_DYNAMIC_K * _score_std
-        if _score_std >= 1e-6
-        else ANOMALY_SCORE_THRESHOLD  # fallback: all scores identical
-    )
-    logger.info(
-        f"Anomaly threshold: {_threshold:.4f}  "
-        f"(mean={combined_score.mean():.4f}, std={_score_std:.4f}, k={ANOMALY_DYNAMIC_K})"
-    )
-    is_anomaly = combined_score > _threshold
+    if _score_std < 1e-6:
+        # All scores identical — no signal; use the static fallback threshold.
+        _threshold = ANOMALY_SCORE_THRESHOLD
+        is_anomaly = combined_score > _threshold
+        logger.info(
+            f"Anomaly threshold: {_threshold:.4f} (static fallback — score std≈0)"
+        )
+    elif ANOMALY_FLAG_MODE == "absolute":
+        # Fixed threshold on the calibrated combined_score. Unlike quantile
+        # mode this can flag NOTHING on a healthy batch — which is the point.
+        # Requires training-calibrated isolation scores to be meaningful
+        # across runs.
+        _threshold = ANOMALY_SCORE_THRESHOLD
+        is_anomaly = combined_score > _threshold
+        logger.info(
+            f"Anomaly threshold: {_threshold:.4f} (absolute mode)"
+        )
+    elif ANOMALY_FLAG_MODE == "quantile":
+        # Flag the top ANOMALY_CONTAMINATION fraction by combined_score. This
+        # guarantees a stable, non-zero anomaly rate tied to the batch's own score
+        # distribution rather than a mean+kσ assumption that can flag nothing.
+        _threshold = float(np.quantile(combined_score, 1.0 - ANOMALY_CONTAMINATION))
+        is_anomaly = combined_score >= _threshold
+        logger.info(
+            f"Anomaly threshold: {_threshold:.4f}  "
+            f"(quantile mode, contamination={ANOMALY_CONTAMINATION:.2f})"
+        )
+    else:  # "dynamic_k" — legacy mean + k·std
+        _threshold = float(combined_score.mean()) + ANOMALY_DYNAMIC_K * _score_std
+        is_anomaly = combined_score > _threshold
+        logger.info(
+            f"Anomaly threshold: {_threshold:.4f}  "
+            f"(dynamic_k mode, mean={combined_score.mean():.4f}, "
+            f"std={_score_std:.4f}, k={ANOMALY_DYNAMIC_K})"
+        )
 
     # ------------------------------------------------------------------
     # Step 7 — assemble and validate output
@@ -305,8 +370,8 @@ def run(
             except OSError:
                 pass
 
-    # Trigger retraining if K-log threshold crossed (uses rolling store for window)
-    retrained = trainer.maybe_retrain(train_df)
+    # Retrain model if the periodic K-log trigger fires
+    retrained = trainer.maybe_retrain(train_df, new_logs_count=len(df))
     if retrained is not None:
         logger.info(
             "AnomalyTrainer retrained on %d rows. New model saved to %s.",

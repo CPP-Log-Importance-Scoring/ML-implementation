@@ -1,11 +1,31 @@
 """
 scoring/incident_clusterer.py
 
-Group related logs into incidents using DBSCAN on the merged scoring features.
+Group related logs into incidents via ANOMALY-SEEDED TEMPORAL WINDOWING.
 
-Only non-ignore-labelled rows are clustered. The raw DBSCAN integer output is
-stored in a temporary "_dbscan_label" column and is never written to cluster_id
-(which must always remain the "C0000"-format string from the correlation graph).
+Why not DBSCAN on scores?
+    The previous approach ran DBSCAN over [final_score, centrality_score,
+    temporal_proximity]. That clusters by score-similarity, not time/causality,
+    so (a) the dense benign mass collapsed into incidents spanning up to ~23h
+    and (b) the rare high-score anomalies fell below DBSCAN's density floor and
+    were discarded as noise — i.e. the rows you most want IN an incident were
+    the ones thrown out (verified: 0/21 critical rows clustered).
+
+This module instead:
+    1. SEEDS on the interesting rows only — is_anomaly OR final_score high OR
+       severity (event_weight) high.
+    2. Groups seeds that fall within INCIDENT_WINDOW_SECONDS of each other in
+       ABSOLUTE time. Gaps are measured between seeds (sparse), so continuous
+       background noise cannot bridge two incidents and an incident stays a
+       bounded, minutes-long burst.
+    3. Keeps a group that clears EITHER a density floor (>= INCIDENT_MIN_SEEDS
+       seeds — dense medium bursts) OR a severity floor (it carries genuine
+       severity, reusing the escalation-gate thresholds — sparse but severe
+       incidents like an OOM cascade that never reaches the density floor).
+       Groups clearing neither are dropped, so isolated false-positive seeds on
+       a clean day still form no incident.
+
+cluster_id (the "C0000" graph-community string from P3) is left untouched.
 
 Public API
 ----------
@@ -20,8 +40,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import DBSCAN
-from sklearn.preprocessing import MinMaxScaler
 
 import common.config as cfg
 from common.logger import get_logger
@@ -32,14 +50,34 @@ logger = get_logger(__name__)
 _SCORED_PATH = "data/processed/scored_logs_df.parquet"
 
 
+def _seed_mask(df: pd.DataFrame) -> pd.Series:
+    """Boolean mask of incident-seed rows: anomalous, high-score, or high-severity.
+
+    Never seeds on an 'ignore'-labelled row (pure benign noise), so a stray
+    is_anomaly flag on an otherwise-benign line can't anchor an incident.
+    """
+    seed = pd.Series(False, index=df.index)
+    if "is_anomaly" in df.columns:
+        seed |= df["is_anomaly"].fillna(False).astype(bool)
+    if "label" in df.columns:
+        seed |= df["label"].isin(cfg.INCIDENT_SEED_LABELS)
+    if "final_score" in df.columns:
+        seed |= df["final_score"] >= cfg.INCIDENT_SEED_SCORE_MIN
+    if "event_weight" in df.columns:
+        seed |= df["event_weight"] >= cfg.INCIDENT_SEED_SEVERITY_MIN
+    if "label" in df.columns:
+        seed &= df["label"] != "ignore"
+    return seed
+
+
 def cluster_incidents(scored_df: pd.DataFrame) -> pd.DataFrame:
-    """Group non-ignore logs into incidents via DBSCAN.
+    """Group seed rows into incidents by absolute-time windowing.
 
     Parameters
     ----------
     scored_df : pd.DataFrame
-        Must contain: final_score, centrality_score, temporal_proximity,
-        label, cluster_id.
+        Must contain: timestamp, final_score, label, cluster_id, and ideally
+        is_anomaly / event_weight (used for seeding).
 
     Returns
     -------
@@ -48,71 +86,136 @@ def cluster_incidents(scored_df: pd.DataFrame) -> pd.DataFrame:
         cluster_id is unchanged (still "C0000"-format strings from P3).
     """
     df = scored_df.copy()
-
-    # Initialise output columns — all rows default to no incident
     df["correlation_id"] = None
     df["is_cross_system"] = False
 
-    # Phase 1 — prepare feature matrix for non-ignore rows only
-    non_ignore_mask = df["label"] != "ignore"
-    X_df = df.loc[
-        non_ignore_mask, ["final_score", "centrality_score", "temporal_proximity"]
-    ].copy()
-
-    if len(X_df) == 0:
-        logger.info("No non-ignore rows to cluster — skipping DBSCAN")
+    if "timestamp" not in df.columns:
+        logger.warning("No timestamp column — cannot form temporal incidents.")
         return df
 
-    scaler = MinMaxScaler()
-    X_scaled = scaler.fit_transform(X_df)
+    seed = _seed_mask(df)
+    n_seeds = int(seed.sum())
+    if n_seeds == 0:
+        logger.info("No seed rows — no incidents formed (clean batch).")
+        return df
 
-    # Phase 2 — DBSCAN
-    dbscan = DBSCAN(eps=cfg.DBSCAN_EPS, min_samples=cfg.DBSCAN_MIN_SAMPLES)
-    raw_labels = dbscan.fit_predict(X_scaled)
-
-    # Store raw DBSCAN integers in a temporary column — NEVER in "cluster_id"
-    df["_dbscan_label"] = np.nan
-    df.loc[non_ignore_mask, "_dbscan_label"] = raw_labels.astype(float)
-
-    # Convert to correlation_id strings; noise (-1) → None
-    corr_id_values = pd.Series(
-        [None if lbl == -1 else f"INC-{int(lbl):04d}" for lbl in raw_labels],
-        index=df.index[non_ignore_mask],
+    # Group seeds by absolute-time gap. Carry per-seed severity flags so a group
+    # can survive on EITHER floor (density or severity); see the keep mask below.
+    work = df.loc[seed, ["timestamp"]].copy()
+    work["timestamp"] = pd.to_datetime(work["timestamp"], errors="coerce")
+    # Carry a stable content key (sequence_number, else the original index) so the
+    # temporal sort below has a DETERMINISTIC tie-breaker. Without it, seeds sharing
+    # a timestamp keep whatever order the upstream merge emitted, and that order can
+    # vary run-to-run — shifting incident boundaries on ties and making the incident
+    # count wobble (observed 52 vs 68 on identical input, 2026-06-25). The business
+    # key removes that dependence on upstream row order entirely.
+    work["_seq"] = (
+        df.loc[seed, "sequence_number"].to_numpy()
+        if "sequence_number" in df.columns else work.index.to_numpy()
     )
-    df.loc[non_ignore_mask, "correlation_id"] = corr_id_values
+    severity_path = cfg.INCIDENT_SEVERITY_FORMATION
+    if severity_path:
+        # _is_critical = a CREDIBLE critical row: critical LABEL backed by genuine
+        # severity (event_weight >= high-sev threshold), exactly as the escalation
+        # gate defines it (cross_run._incident_escalation). The unsupervised ML term
+        # can stamp 'critical' on a benign line; without the severity backing such a
+        # row would anchor its own severity-formed incident. Falls back to label-only
+        # when event_weight is unavailable (legacy callers / unit fixtures).
+        if "label" in df.columns and "event_weight" in df.columns:
+            work["_is_critical"] = (
+                (df.loc[seed, "label"] == "critical")
+                & (df.loc[seed, "event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN)
+            ).to_numpy()
+        elif "label" in df.columns:
+            work["_is_critical"] = (df.loc[seed, "label"] == "critical").to_numpy()
+        else:
+            work["_is_critical"] = False
+        work["_is_high_sev"] = (
+            (df.loc[seed, "event_weight"] >= cfg.INCIDENT_ESCALATE_HIGH_SEV_MIN).to_numpy()
+            if "event_weight" in df.columns else False
+        )
+    work = work.dropna(subset=["timestamp"]).sort_values(["timestamp", "_seq"])
 
-    n_incidents = len(df["correlation_id"].dropna().unique())
-    n_noise = int((raw_labels == -1).sum())
-    noise_ratio = n_noise / len(X_df)
-    cluster_sizes = df[df["correlation_id"].notna()].groupby("correlation_id").size()
-    largest = int(cluster_sizes.max()) if len(cluster_sizes) > 0 else 0
-    logger.info(
-        "Incidents found: %d, noise_ratio=%.2f, largest_incident_size=%d",
-        n_incidents, noise_ratio, largest,
-    )
+    gap = work["timestamp"].diff().dt.total_seconds()
+    if severity_path:
+        # Two-tier gap: a severe cascade is sparser than a dense medium chain, so
+        # a boundary touching a severe seed (either side) tolerates the larger
+        # INCIDENT_SEVERE_WINDOW_SECONDS; medium-only boundaries stay tight at
+        # INCIDENT_WINDOW_SECONDS. Keeps medium chains from over-merging while a
+        # sparse severe cascade stays one incident (see config note).
+        severe = work["_is_critical"] | work["_is_high_sev"]
+        sev_boundary = severe | severe.shift(1, fill_value=False)
+        allowed = sev_boundary.map({
+            True: float(cfg.INCIDENT_SEVERE_WINDOW_SECONDS),
+            False: float(cfg.INCIDENT_WINDOW_SECONDS),
+        })
+        grp = (gap > allowed).cumsum()
+    else:
+        grp = (gap > float(cfg.INCIDENT_WINDOW_SECONDS)).cumsum()
 
-    # Phase 3 — is_cross_system flag per incident
+    # Keep a group if it clears EITHER floor:
+    #   • density  — >= INCIDENT_MIN_SEEDS seeds (dense medium bursts).
+    #   • severity — it carries genuine severity (>= INCIDENT_ESCALATE_MIN_CRITICAL_ROWS
+    #     critical-LABEL rows, or >= INCIDENT_ESCALATE_HIGH_SEV_COUNT high-severity
+    #     rows). Lets a sparse severe incident form below the density floor.
+    # Thresholds shared with the escalation gate, so a severity-formed incident is
+    # exactly one that also surfaces (see common/config.py INCIDENT_SEVERITY_FORMATION).
+    group_size = grp.map(grp.value_counts())
+    keep = group_size >= cfg.INCIDENT_MIN_SEEDS
+    if severity_path:
+        by_grp = work.groupby(grp)
+        has_critical = by_grp["_is_critical"].transform("sum") >= cfg.INCIDENT_ESCALATE_MIN_CRITICAL_ROWS
+        has_high_sev = by_grp["_is_high_sev"].transform("sum") >= cfg.INCIDENT_ESCALATE_HIGH_SEV_COUNT
+        # An incident is a GROUP, never a lone line: the severity floor only forms an
+        # incident when the group also clears INCIDENT_MIN_SIZE rows. This is what
+        # stops an isolated critical/high-sev seed on a sparse day from becoming a
+        # one-row incident that then escalates (the single-log demo failure). Genuine
+        # cascades sit far above the floor, so recall on real severe bursts is intact.
+        keep |= (has_critical | has_high_sev) & (group_size >= cfg.INCIDENT_MIN_SIZE)
+    grp = grp.where(keep, other=np.nan)
+
+    # Renumber surviving groups chronologically → INC-NNNN.
+    valid = grp.dropna()
+    if len(valid):
+        firsts = (
+            work.loc[valid.index]
+            .assign(_g=valid)
+            .groupby("_g")["timestamp"].min()
+            .sort_values()
+        )
+        id_map = {g: f"INC-{i:04d}" for i, g in enumerate(firsts.index)}
+        ids = grp.map(lambda g: id_map.get(g) if pd.notna(g) else None)
+    else:
+        ids = grp  # all NaN
+
+    df.loc[work.index, "correlation_id"] = ids.values
+
     valid_incidents = df["correlation_id"].dropna().unique()
+    sizes_out = df[df["correlation_id"].notna()].groupby("correlation_id").size()
+    if len(sizes_out):
+        spans = (
+            df[df["correlation_id"].notna()]
+            .assign(_ts=pd.to_datetime(df.loc[df["correlation_id"].notna(), "timestamp"]))
+            .groupby("correlation_id")["_ts"]
+            .agg(lambda s: (s.max() - s.min()).total_seconds())
+        )
+        max_span_min = float(spans.max()) / 60.0
+    else:
+        max_span_min = 0.0
+    logger.info(
+        "Incidents: %d from %d seeds (largest=%d rows, max_span=%.1f min).",
+        len(valid_incidents), n_seeds,
+        int(sizes_out.max()) if len(sizes_out) else 0, max_span_min,
+    )
+
+    # is_cross_system: incident touches >1 graph community.
     n_cross_system = 0
     for cid in valid_incidents:
         mask = df["correlation_id"] == cid
-        n_unique_cluster_ids = df.loc[mask, "cluster_id"].nunique()
-        is_cross = bool(n_unique_cluster_ids > 1)
-        df.loc[mask, "is_cross_system"] = is_cross
-        if is_cross:
+        if "cluster_id" in df.columns and df.loc[mask, "cluster_id"].nunique() > 1:
+            df.loc[mask, "is_cross_system"] = True
             n_cross_system += 1
-
     logger.info("Cross-system incidents: %d", n_cross_system)
-
-    # Phase 4 — clean up temporary column
-    df = df.drop(columns=["_dbscan_label"])
-
-    # Sanity check: "cluster_id" must still be string dtype — DBSCAN must not
-    # have leaked its integer labels into it
-    if "cluster_id" in df.columns and len(df) > 0:
-        assert not pd.api.types.is_integer_dtype(df["cluster_id"]), (
-            "cluster_id column is integer dtype — DBSCAN label leaked into cluster_id"
-        )
 
     return df
 

@@ -73,6 +73,26 @@ def score(
         len(df), n_missing_anomaly, n_missing_graph,
     )
 
+    # Audit trail BEFORE any filling: rows absent from an upstream input get
+    # mean-filled below, which makes them look perfectly average — these flags
+    # are the only record that their scores are imputed, not computed. They are
+    # carried through to scored_logs_df.parquet.
+    df["anomaly_missing"] = ~df["sequence_number"].isin(anomaly_df["sequence_number"])
+    df["graph_missing"] = ~df["sequence_number"].isin(graph_scores_df["sequence_number"])
+
+    # A few stragglers are tolerable; a systematic gap means an upstream stage
+    # silently lost rows — fail loudly instead of papering over it with means.
+    for flag_col, source in (("anomaly_missing", "anomaly_df"),
+                             ("graph_missing", "graph_scores_df")):
+        frac = float(df[flag_col].mean()) if len(df) else 0.0
+        if frac > cfg.SCORING_MAX_MISSING_FRACTION:
+            raise ValueError(
+                f"{frac:.1%} of rows are missing from {source} "
+                f"(cap: {cfg.SCORING_MAX_MISSING_FRACTION:.1%}). Refusing to "
+                "mean-fill a systematic gap — check why the upstream stage "
+                "dropped these sequence_numbers."
+            )
+
     # Step 2 — fill missing values
     # Bool columns (is_anomaly, in_graph, in_sequence) → False
     for col in _BOOL_FILL_COLS:
@@ -145,10 +165,16 @@ def score(
     )
     df = df.drop(columns=["_ts_num"])
 
-    # Step 4 — final_score (2-term formula, clipped to [0, 1])
+    # Step 4 — final_score (3-term formula, clipped to [0, 1])
+    # Severity (event_weight) is an explicit term here, deliberately kept OUT of the
+    # IsolationForest features so it contributes exactly once and does not leak the
+    # severity label into the unsupervised model. event_weight is part of the P2
+    # features contract; default to 0 if a legacy caller omits it.
+    severity_term = df["event_weight"] if "event_weight" in df.columns else 0.0
     df["final_score"] = (
         cfg.SCORING_ML_WEIGHT * df["combined_score"]
         + cfg.SCORING_GRAPH_WEIGHT * df["centrality_score"]
+        + cfg.SCORING_SEVERITY_WEIGHT * severity_term
     ).clip(0.0, 1.0)
 
     # Step 5 — validate
@@ -159,6 +185,104 @@ def score(
     if not np.isfinite(df["final_score"].to_numpy()).all():
         raise ValueError("final_score has inf or NaN values")
 
+    return df
+
+
+def apply_message_adjustments(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply message-text corrections to final_score before labeling.
+
+    Two rules (see common/config.py RECOVERY_* / ONSET_*):
+      1. Damp recovery / routine all-clear lines (e.g. "OOM event resolved",
+         "Failover capability restored") so they stop outranking the real
+         onset markers and stop crossing into "critical".
+      2. Floor genuine onset markers ("<SCENARIO> event in progress -
+         monitoring") so they remain visible even when the dataset mis-tags
+         them INFO (their severity term would otherwise bury them).
+
+    Requires a "message" column; returns the df unchanged (no-op) if absent so
+    legacy callers without message text keep working.
+    """
+    if "message" not in df.columns:
+        logger.warning("apply_message_adjustments: no 'message' column — skipping")
+        return df
+
+    msg = df["message"].fillna("").astype(str)
+
+    # (1) recovery / all-clear damping
+    recovery = pd.Series(False, index=df.index)
+    for pat in cfg.RECOVERY_MESSAGE_PATTERNS:
+        recovery |= msg.str.contains(pat, case=False, regex=True, na=False)
+    df.loc[recovery, "final_score"] = (
+        df.loc[recovery, "final_score"] * cfg.RECOVERY_SCORE_DAMPING
+    )
+
+    # (2) onset-marker floor (disjoint from the recovery set)
+    onset = msg.str.contains(
+        cfg.ONSET_MARKER_PATTERN, case=False, regex=True, na=False
+    )
+    df.loc[onset, "final_score"] = df.loc[onset, "final_score"].clip(
+        lower=cfg.ONSET_SCORE_FLOOR
+    )
+
+    # (3) severity fault promotion — the inverse of the credibility gate below.
+    #     A line whose CONTENT carries an unambiguous fault indicator but was
+    #     UNDER-tagged (e.g. a STARVATION/SPLIT_BRAIN burst parsed INFO) is
+    #     promoted to a credible high severity so it seeds clustering and counts
+    #     toward escalation. final_score is lifted by the same severity delta so
+    #     the row clears 'ignore' and is allowed to seed. See common/config.py.
+    fault = pd.Series(False, index=df.index)
+    n_promoted = 0
+    if cfg.SEVERITY_FAULT_PROMOTION_ENABLED and "event_weight" in df.columns:
+        for pat in cfg.SEVERITY_FAULT_PATTERNS:
+            fault |= msg.str.contains(pat, case=False, regex=True, na=False)
+        promote_mask = fault & (df["event_weight"] < cfg.SEVERITY_FAULT_PROMOTE_WEIGHT)
+        delta = cfg.SCORING_SEVERITY_WEIGHT * (
+            cfg.SEVERITY_FAULT_PROMOTE_WEIGHT - df.loc[promote_mask, "event_weight"]
+        )
+        df.loc[promote_mask, "final_score"] = df.loc[promote_mask, "final_score"] + delta
+        df.loc[promote_mask, "event_weight"] = cfg.SEVERITY_FAULT_PROMOTE_WEIGHT
+        n_promoted = int(promote_mask.sum())
+
+    # (4) severity credibility gate — strip the severity-term bonus from lines
+    #     whose message asserts normal operation but whose log_level tag was
+    #     inflated (e.g. "...- NORMAL" carried at severity=CRITICAL). score()
+    #     baked SCORING_SEVERITY_WEIGHT * event_weight into final_score; here we
+    #     subtract the excess over the INFO baseline so the line keeps only its
+    #     ML/graph score. Requires event_weight (present from the P2 features
+    #     contract); no-op for legacy callers without it.
+    n_gated = 0
+    if cfg.SEVERITY_GATE_ENABLED and "event_weight" in df.columns:
+        benign = pd.Series(False, index=df.index)
+        for pat in cfg.SEVERITY_GATE_BENIGN_PATTERNS:
+            benign |= msg.str.contains(pat, case=False, regex=True, na=False)
+        # Only act where the tag actually inflated the score above INFO, never
+        # gate a genuine onset marker we just floored, and never demote a line we
+        # just promoted on fault content (fault evidence wins over normalcy words).
+        gate_mask = benign & (df["event_weight"] > cfg.DEFAULT_SEVERITY_WEIGHT) & (~onset) & (~fault)
+        excess = cfg.SCORING_SEVERITY_WEIGHT * (
+            df.loc[gate_mask, "event_weight"] - cfg.DEFAULT_SEVERITY_WEIGHT
+        )
+        df.loc[gate_mask, "final_score"] = df.loc[gate_mask, "final_score"] - excess
+        # Neutralise the credibility-failed severity itself, not just its
+        # final_score contribution. event_weight is read again downstream by
+        # incident seeding/formation and the escalation gate; left at its inflated
+        # value, a line the gate just judged non-credible ("ASIC temperature: 50C
+        # - NORMAL" tagged CRITICAL) still counts as a high-severity row there and
+        # manufactures incidents/escalations from benign status spam (measured
+        # 2026-06-24: 3 sim_real incidents escalated purely on benign-tagged rows).
+        # Reverting it to the INFO baseline keeps one credibility-adjusted severity
+        # for every consumer. Done after the excess subtraction above so that
+        # correction still uses the original weight.
+        df.loc[gate_mask, "event_weight"] = cfg.DEFAULT_SEVERITY_WEIGHT
+        n_gated = int(gate_mask.sum())
+
+    df["final_score"] = df["final_score"].clip(0.0, 1.0)
+    logger.info(
+        "Message adjustments: damped %d recovery/all-clear lines, "
+        "floored %d onset markers, promoted %d fault-content lines, "
+        "severity-gated %d benign-tag lines",
+        int(recovery.sum()), int(onset.sum()), n_promoted, n_gated,
+    )
     return df
 
 

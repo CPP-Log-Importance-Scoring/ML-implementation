@@ -5,30 +5,20 @@
   },
   "mappings": {
     "properties": {
-      "log_id": {
-        "type": "keyword"
-      },
-      "timestamp": {
-        "type": "date"
-      },
-      "raw_text": {
-        "type": "text"
-      },
-      "label": {
-        "type": "keyword"
-      },
-      "final_score": {
-        "type": "float"
-      },
-      "incident_id": {
-        "type": "keyword"
-      },
-      "is_root_cause": {
-        "type": "boolean"
-      },
-      "root_cause_confidence": {
-        "type": "float"
-      }
+      "log_id":                { "type": "keyword" },
+      "sequence_number":       { "type": "long" },
+      "timestamp":             { "type": "date" },
+      "host":                  { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+      "template_id":           { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+      "label":                 { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+      "message":               { "type": "text" },
+      "raw_text":              { "type": "text" },
+      "importance_score":      { "type": "float" },
+      "final_score":           { "type": "float" },
+      "correlation_id":        { "type": "keyword" },
+      "incident_id":           { "type": "keyword" },
+      "is_root_cause":         { "type": "boolean" },
+      "root_cause_confidence": { "type": "float" }
     }
   }
 }

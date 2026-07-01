@@ -19,6 +19,8 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
         sys.path.insert(0, _p)
 
 import streamlit as st
+from ui import apply_theme, render_sidebar_nav, service_status_dot
+from data import db, es
 
 st.set_page_config(
     page_title="HPE CX Incident Intelligence",
@@ -27,103 +29,161 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from ui import apply_theme
 apply_theme()
+render_sidebar_nav()
 
 # ── Sidebar branding ──────────────────────────────────────────────────────
 with st.sidebar:
+    st.markdown("<h3>System Services</h3>", unsafe_allow_html=True)
+    db_ok = db.is_db_healthy()
+    es_ok = es.is_elasticsearch_healthy()
+    
     st.markdown(
-        """
-        <div style='padding: 0.5rem 0 1.2rem 0;'>
-          <div style='font-size:1.1rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
-            ⚡ HPE CX Intelligence
-          </div>
-          <div style='font-size:0.72rem; color:#64748b; margin-top:2px; font-family:"IBM Plex Mono",monospace;'>
-            Network Incident Dashboard
-          </div>
+        f"""
+        <div style='display:flex; flex-direction:column; gap:8px; margin-top:6px;'>
+          {service_status_dot(db_ok, "PostgreSQL: " + ("Connected" if db_ok else "Disconnected"))}
+          {service_status_dot(es_ok, "Elasticsearch: " + ("Online" if es_ok else "Offline"))}
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.divider()
 
-# ── Home redirect ─────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <div style='text-align:center; padding: 3rem 0 2rem 0;'>
-      <div style='font-size:3rem;'>⚡</div>
-      <h1 style='font-size:2rem; font-weight:700; color:#0f172a; margin:0.5rem 0;'>
-        HPE CX Incident Intelligence
-      </h1>
-      <p style='color:#64748b; font-size:1rem; margin-bottom:2rem;'>
-        Real-time network incident analysis powered by ML anomaly detection and LLM summarisation.
-      </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# ── Home display ──────────────────────────────────────────────────────────
+hero_col, status_col = st.columns([2.2, 1], gap="large")
 
-col1, col2, col3, col4 = st.columns(4)
+with hero_col:
+    st.markdown(
+        """
+        <div style='background: linear-gradient(135deg, #f8fbff 0%, #ffffff 55%, #eef6ff 100%);
+                    padding: 2rem 2rem 1.4rem 2rem; border-radius: 18px; margin-bottom: 1.2rem;
+                    overflow: hidden;
+                    box-shadow: 0 2px 6px rgba(15,23,42,0.07), 0 16px 32px rgba(15,23,42,0.09);
+                    border: 1.5px solid rgba(59,130,246,0.38);'>
+          <div style='display:flex; align-items:center; gap:10px; margin-bottom:0.5rem;'>
+            <span style='font-size:0.82rem; text-transform:uppercase; letter-spacing:0.18em; color:#2563eb;'>HPE CX Intelligence Hub</span>
+          </div>
+          <h1 style='font-size:2.15rem; font-weight:800; color:#0f172a !important; margin:0 0 0.35rem 0; letter-spacing:-0.03em;'>
+            Turn noisy network telemetry into clear incident stories.
+          </h1>
+          <p style='color:#334155; font-size:1rem; line-height:1.6; max-width:760px; margin:0 0 0.8rem 0;'>
+            This software helps operations teams spot anomalies, inspect correlated events, and understand which hosts need attention first.
+          </p>
+          <p style='color:#475569; font-size:0.95rem; line-height:1.55; max-width:760px; margin:0 0 0.8rem 0;'>
+            Start with the incident feed, drill into host health, or search logs directly to move from signal to response with confidence.
+          </p>
+          <div style='display:flex; flex-wrap:wrap; gap:0.45rem;'>
+            <span style='background:rgba(59,130,246,0.12); color:#1d4ed8; border:1px solid rgba(59,130,246,0.2); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Anomaly detection</span>
+            <span style='background:rgba(34,197,94,0.12); color:#15803d; border:1px solid rgba(34,197,94,0.2); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Root-cause clues</span>
+            <span style='background:rgba(251,191,36,0.12); color:#b45309; border:1px solid rgba(251,191,36,0.2); border-radius:999px; padding:0.35rem 0.65rem; font-size:0.78rem;'>Live observability</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+with status_col:
+    st.markdown(
+        """
+        <div class="kpi-card" style='padding:1rem; min-height: 180px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 16px;'>
+          <div style='font-size:0.75rem; text-transform:uppercase; letter-spacing:0.18em; color:#64748b; margin-bottom:0.35rem;'>System status</div>
+          <div style='font-size:1.2rem; font-weight:700; color:#0f172a; margin-bottom:0.45rem;'>Live services</div>
+          <div style='color:#475569; font-size:0.9rem; line-height:1.45;'>PostgreSQL and Elasticsearch health are visible from the sidebar and this home view for quick triage.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.markdown("<h2 style='margin-bottom: 0.8rem;'>Quick access</h2>", unsafe_allow_html=True)
+
+# ── 5-column layout: existing 4 cards + new Upload & Analyze card ─────────
+col1, col2, col3, col4, col5 = st.columns(5, gap="medium")
 
 with col1:
     st.markdown(
         """
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px;
-                    padding:1.5rem; text-align:center; transition:all 0.15s;'>
-          <div style='font-size:2rem; margin-bottom:0.5rem;'>📋</div>
-          <div style='font-weight:700; color:#0f172a; font-size:0.95rem;'>Incident Feed</div>
-          <div style='color:#64748b; font-size:0.8rem; margin-top:4px;'>
-            All incidents with severity filters
+        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
+          <div>
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Feed</div>
+            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
+              Real-time incident view with severity, host, and cross-system correlation filters.
+            </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    if st.button("Open Feed →", key="nav_feed", use_container_width=True, type="primary"):
+        st.switch_page("pages/incident_feed.py")
 
 with col2:
     st.markdown(
         """
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px;
-                    padding:1.5rem; text-align:center;'>
-          <div style='font-size:2rem; margin-bottom:0.5rem;'>🔍</div>
-          <div style='font-weight:700; color:#0f172a; font-size:0.95rem;'>Incident Detail</div>
-          <div style='color:#64748b; font-size:0.8rem; margin-top:4px;'>
-            Graph, timeline &amp; LLM summary
+        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
+          <div>
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Detail</div>
+            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
+              Force-directed correlation graphs, interactive timelines, and cached AI summaries.
+            </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    if st.button("Open Details →", key="nav_detail", use_container_width=True, type="primary"):
+        st.switch_page("pages/incident_detail.py")
 
 with col3:
     st.markdown(
         """
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px;
-                    padding:1.5rem; text-align:center;'>
-          <div style='font-size:2rem; margin-bottom:0.5rem;'>🖥️</div>
-          <div style='font-weight:700; color:#0f172a; font-size:0.95rem;'>Host Health</div>
-          <div style='color:#64748b; font-size:0.8rem; margin-top:4px;'>
-            Per-host anomaly rates
+        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
+          <div>
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Host Health</div>
+            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
+              Per-host statistics, incident counts, anomaly rate visualizations, and trend graphs.
+            </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    if st.button("Open Health →", key="nav_health", use_container_width=True, type="primary"):
+        st.switch_page("pages/host_health.py")
 
 with col4:
     st.markdown(
         """
-        <div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:12px;
-                    padding:1.5rem; text-align:center;'>
-          <div style='font-size:2rem; margin-bottom:0.5rem;'>🔎</div>
-          <div style='font-weight:700; color:#0f172a; font-size:0.95rem;'>Log Search</div>
-          <div style='color:#64748b; font-size:0.8rem; margin-top:4px;'>
-            Full-text Elasticsearch search
+        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
+          <div>
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Log Search</div>
+            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
+              Full-text search indexed via Elasticsearch with filters and CSV export capabilities.
+            </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+    if st.button("Open Search →", key="nav_search", use_container_width=True, type="primary"):
+        st.switch_page("pages/log_search.py")
 
-st.markdown("<br>", unsafe_allow_html=True)
-st.info("👈 Use the sidebar navigation to open a page.", icon="ℹ️")
+with col5:
+    st.markdown(
+        """
+        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;
+                  border: 1px solid rgba(59,130,246,0.35); background: rgba(59,130,246,0.04);">
+          <div>
+            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Upload & Analyze</div>
+            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
+              Drag in .log files, trigger the full pipeline, watch live progress, and view a result summary.
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Upload Logs →", key="nav_upload", use_container_width=True, type="primary"):
+        st.switch_page("pages/upload_logs.py")
+
+st.markdown("<br><br>", unsafe_allow_html=True)
+st.info("Use the sidebar navigation or click any buttons above to explore.")

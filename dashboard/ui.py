@@ -7,7 +7,8 @@ Shared Streamlit UI helpers — theme CSS, time-window picker, status badges.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, time, timedelta
+import json
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -18,6 +19,50 @@ for _p in [str(_PROJECT_ROOT), str(_DASHBOARD_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+
+# ---------------------------------------------------------------------------
+# Filter Persistence
+# ---------------------------------------------------------------------------
+
+_FILTER_STORE_FILE = _PROJECT_ROOT / "storage" / "filters.json"
+
+class _FilterEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime, date, time)):
+            return obj.isoformat()
+        return super().default(obj)
+
+def persist_filters() -> None:
+    data = {}
+    for k, v in st.session_state.items():
+        if k.startswith("_backing_"):
+            data[k] = v
+    try:
+        _FILTER_STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(_FILTER_STORE_FILE, "w") as f:
+            json.dump(data, f, cls=_FilterEncoder)
+    except Exception as e:
+        print(f"Failed to save filters: {e}")
+
+def load_filters() -> None:
+    if "_filters_loaded" in st.session_state:
+        return
+    st.session_state["_filters_loaded"] = True
+    if _FILTER_STORE_FILE.exists():
+        try:
+            with open(_FILTER_STORE_FILE, "r") as f:
+                data = json.load(f)
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    for dk in ["start_date", "end_date"]:
+                        if dk in v and isinstance(v[dk], str):
+                            v[dk] = date.fromisoformat(v[dk])
+                    for tk in ["start_time", "end_time"]:
+                        if tk in v and isinstance(v[tk], str):
+                            v[tk] = time.fromisoformat(v[tk])
+                st.session_state[k] = v
+        except Exception as e:
+            print(f"Failed to load filters: {e}")
 
 # ---------------------------------------------------------------------------
 # Theme
@@ -87,8 +132,10 @@ h3 {
 }
 
 /* Navigation links */
+/* Hide Streamlit's auto-generated page nav — every page renders the shared
+   branded emoji navbar via render_sidebar_nav() instead. */
 [data-testid="stSidebarNav"] {
-    background: transparent !important;
+    display: none !important;
 }
 
 [data-testid="stSidebarNav"] * {
@@ -151,16 +198,22 @@ div[data-testid="stVerticalBlockBorderWrapper"]:hover {
 }
 
 /* ── Buttons ──────────────────────────────── */
+.stButton {
+    margin-top: 0.15rem;
+    margin-bottom: 0.15rem;
+}
 .stButton > button {
     border-radius: 8px;
     font-size: 0.83rem;
     font-weight: 600;
-    padding: 0.4rem 1.1rem;
+    padding: 0.45rem 1.1rem;
+    min-height: 2.45rem;
     border: 1px solid #e2e8f0;
     background: #ffffff;
     color: #374151;
     transition: all 0.15s ease;
     letter-spacing: 0.01em;
+    width: 100%;
 }
 .stButton > button:hover {
     background: #f1f5f9;
@@ -231,6 +284,13 @@ hr {
     border-radius: 10px !important;
     background: #fafafa;
 }
+/* Header label was inheriting white-on-white; force a readable dark tone. */
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] details > summary * {
+    color: #0f172a !important;
+}
 
 /* ── Spinner ──────────────────────────────── */
 [data-testid="stSpinner"] {
@@ -265,13 +325,114 @@ hr {
     font-weight: 600 !important;
     letter-spacing: 0.01em;
 }
+
+/* ── Premium Custom Cards ─────────────────── */
+.kpi-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 1.1rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 8px rgba(0,0,0,0.03);
+    transition: all 0.2s ease;
+    text-align: left;
+}
+.kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+    border-color: #cbd5e1;
+}
+.kpi-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.kpi-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-top: 4px;
+}
+
+.incident-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 0.75rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.incident-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+    border-color: #cbd5e1;
+}
+.incident-card-critical {
+    border-left: 5px solid #DC2626 !important;
+}
+.incident-card-medium {
+    border-left: 5px solid #F59E0B !important;
+}
+.incident-card-low {
+    border-left: 5px solid #22C55E !important;
+}
+.incident-card-ignore {
+    border-left: 5px solid #94A3B8 !important;
+}
 </style>
 """
 
 
 def apply_theme() -> None:
     """Inject the shared dashboard CSS theme."""
+    load_filters()
     st.markdown(THEME_CSS, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Sidebar navigation
+# ---------------------------------------------------------------------------
+
+# (page path, emoji label) — the single source of truth for the sidebar nav.
+_NAV_LINKS = [
+    ("app.py",                   "Home"),
+    ("pages/incident_feed.py",   "Incident Feed"),
+    ("pages/incident_detail.py", "Incident Detail"),
+    ("pages/host_health.py",     "Host Health"),
+    ("pages/log_search.py",      "Log Search"),
+    ("pages/upload_logs.py",     "Upload & Analyze"),
+]
+
+
+def render_sidebar_nav() -> None:
+    """Render the shared branded sidebar navigation (emoji page links).
+
+    Replaces Streamlit's auto-generated page nav (hidden via THEME_CSS) with a
+    single branded navbar so every page shows identical, emoji-labelled links.
+    Call once per page, right after ``apply_theme()`` and before any
+    page-specific sidebar widgets.
+    """
+    with st.sidebar:
+        st.markdown(
+            """
+            <div style='padding: 0.5rem 0 1rem 0;'>
+              <div style='font-size:1.15rem; font-weight:700; color:#0f172a; letter-spacing:-0.02em;'>
+                HPE CX Intelligence
+              </div>
+              <div style='font-size:0.7rem; color:#64748b; margin-top:2px; font-family:"IBM Plex Mono",monospace;'>
+                Observability Platform
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.divider()
+        for path, label in _NAV_LINKS:
+            st.page_link(path, label=label)
+        st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -283,33 +444,58 @@ def render_time_window(prefix: str = "time"):
     Render start/end date+time pickers in the sidebar.
     Returns (start_dt, end_dt) as datetime objects.
 
-    Uses session_state for defaults to avoid Streamlit DuplicateWidgetID errors.
+    Values survive page navigation via a backing-store key.  Streamlit clears
+    widget keys when the widget is not rendered on the current page, but never
+    clears plain session_state keys set by application code.  The backing store
+    is the source of truth; widget keys are seeded from it on each page entry.
     """
     now = datetime.now().replace(second=0, microsecond=0)
     default_start = now - timedelta(days=7)
 
-    if f"{prefix}_start_date" not in st.session_state:
-        st.session_state[f"{prefix}_start_date"] = default_start.date()
-    if f"{prefix}_start_time" not in st.session_state:
-        st.session_state[f"{prefix}_start_time"] = time(0, 0)
-    if f"{prefix}_end_date" not in st.session_state:
-        st.session_state[f"{prefix}_end_date"] = now.date()
-    if f"{prefix}_end_time" not in st.session_state:
-        st.session_state[f"{prefix}_end_time"] = time(23, 59)
+    _bk = f"_backing_{prefix}_time"
+    if _bk not in st.session_state:
+        st.session_state[_bk] = {
+            "start_date": default_start.date(),
+            "start_time": time(0, 0),
+            "end_date":   now.date(),
+            "end_time":   time(23, 59),
+        }
+    _backed = st.session_state[_bk]
 
-    start_date = st.date_input("Start date", key=f"{prefix}_start_date")
-    start_time_val = st.time_input("Start time", key=f"{prefix}_start_time", step=300)
-    end_date = st.date_input("End date", key=f"{prefix}_end_date")
-    end_time_val = st.time_input("End time", key=f"{prefix}_end_time", step=300)
+    _sd = f"{prefix}_start_date"
+    _st = f"{prefix}_start_time"
+    _ed = f"{prefix}_end_date"
+    _et = f"{prefix}_end_time"
+    if _sd not in st.session_state:
+        st.session_state[_sd] = _backed["start_date"]
+    if _st not in st.session_state:
+        st.session_state[_st] = _backed["start_time"]
+    if _ed not in st.session_state:
+        st.session_state[_ed] = _backed["end_date"]
+    if _et not in st.session_state:
+        st.session_state[_et] = _backed["end_time"]
+
+    start_date     = st.date_input("Start date",  value=st.session_state[_sd], key=_sd)
+    start_time_val = st.time_input("Start time",  value=st.session_state[_st], key=_st, step=300)
+    end_date       = st.date_input("End date",    value=st.session_state[_ed], key=_ed)
+    end_time_val   = st.time_input("End time",    value=st.session_state[_et], key=_et, step=300)
+
+    st.session_state[_bk] = {
+        "start_date": start_date,
+        "start_time": start_time_val,
+        "end_date":   end_date,
+        "end_time":   end_time_val,
+    }
+    persist_filters()
 
     start_dt = datetime.combine(start_date, start_time_val)
-    end_dt = datetime.combine(end_date, end_time_val)
+    end_dt   = datetime.combine(end_date, end_time_val)
 
     if end_dt < start_dt:
         st.error("End must be after start.")
         st.stop()
 
-    st.caption(f"📅 {start_dt:%d %b %Y %H:%M} → {end_dt:%d %b %Y %H:%M}")
+    st.caption(f"{start_dt:%d %b %Y %H:%M} → {end_dt:%d %b %Y %H:%M}")
     return start_dt, end_dt
 
 

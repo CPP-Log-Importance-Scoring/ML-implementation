@@ -33,6 +33,8 @@ import pytest
 from common.config import (
     ANOMALY_SCORE_THRESHOLD,
     ANOMALY_DYNAMIC_K,
+    ANOMALY_FLAG_MODE,
+    ANOMALY_CONTAMINATION,
     COLD_START_FULL_CONFIDENCE_THRESHOLD,
     IF_FEATURE_COLUMNS,
     RETRAINING_TRIGGER_EVERY_K,
@@ -53,7 +55,7 @@ def build_features_df(n_rows: int = 200, n_sessions: int = 5) -> pd.DataFrame:
     """
     rng = np.random.default_rng(0)
     templates = ["ROUTE", "PORT_DOWN", "LOGIN", "HEALTH"]
-    return pd.DataFrame({
+    df = pd.DataFrame({
         "sequence_number":          np.arange(1, n_rows + 1),
         "session_id":               [f"sess_{i % n_sessions}" for i in range(n_rows)],
         "template_id":              [templates[i % len(templates)] for i in range(n_rows)],
@@ -67,7 +69,25 @@ def build_features_df(n_rows: int = 200, n_sessions: int = 5) -> pd.DataFrame:
         "time_delta_session_start": rng.uniform(0.0, 1800.0, n_rows),
         "inter_arrival_rate":       rng.exponential(5.0, n_rows),
         "counter_proximity":        rng.uniform(0.0, 1.0, n_rows),
+        # Section-4 metric features (values + present flags)
+        "metric_zscore":            rng.uniform(0.0, 4.0, n_rows),
+        "metric_zscore_present":    rng.choice([0.0, 1.0], n_rows),
+        "drop_rate":                rng.uniform(0.0, 100.0, n_rows),
+        "drop_rate_present":        rng.choice([0.0, 1.0], n_rows),
+        "utilization":              rng.uniform(0.0, 100.0, n_rows),
+        "utilization_present":      rng.choice([0.0, 1.0], n_rows),
+        # Rolling-slope trend features (std-normalised OLS slope + present flags)
+        "metric_slope_short":          rng.uniform(-3.0, 3.0, n_rows),
+        "metric_slope_short_present":  rng.choice([0.0, 1.0], n_rows),
+        "metric_slope_long":           rng.uniform(-3.0, 3.0, n_rows),
+        "metric_slope_long_present":   rng.choice([0.0, 1.0], n_rows),
     })
+    # Safety net: any IF feature added to config after this fixture was written
+    # gets a generic finite filler instead of breaking every detect() test.
+    for col in IF_FEATURE_COLUMNS:
+        if col not in df.columns:
+            df[col] = rng.uniform(0.0, 1.0, n_rows)
+    return df
 
 
 def _make_anomaly_df(n_rows: int = 100) -> pd.DataFrame:
@@ -174,12 +194,17 @@ class TestDetectScoreBounds:
         result = detect(features_df)
         scores = result["combined_score"].values
         score_std = float(scores.std())
-        threshold = (
-            float(scores.mean()) + ANOMALY_DYNAMIC_K * score_std
-            if score_std >= 1e-6
-            else ANOMALY_SCORE_THRESHOLD
-        )
-        expected = result["combined_score"] > threshold
+        # Mirror the detector's configured flag strategy (see anomaly_detector Step 6).
+        if score_std < 1e-6:
+            expected = result["combined_score"] > ANOMALY_SCORE_THRESHOLD
+        elif ANOMALY_FLAG_MODE == "absolute":
+            expected = result["combined_score"] > ANOMALY_SCORE_THRESHOLD
+        elif ANOMALY_FLAG_MODE == "quantile":
+            threshold = float(np.quantile(scores, 1.0 - ANOMALY_CONTAMINATION))
+            expected = result["combined_score"] >= threshold
+        else:  # dynamic_k
+            threshold = float(scores.mean()) + ANOMALY_DYNAMIC_K * score_std
+            expected = result["combined_score"] > threshold
         pd.testing.assert_series_equal(
             result["is_anomaly"].reset_index(drop=True),
             expected.reset_index(drop=True),
@@ -236,6 +261,7 @@ class TestDetectEdgeCases:
         """When all decision_function values are equal, isolation_score == 0.5."""
         mock_pipeline = MagicMock()
         mock_pipeline.n_samples_seen_ = COLD_START_FULL_CONFIDENCE_THRESHOLD
+        mock_pipeline.calibration_ = None   # exercise the per-batch fallback path
         mock_pipeline.decision_function.return_value = np.ones(len(features_df))
 
         with patch("ml.anomaly_detector._train_model", return_value=mock_pipeline):
@@ -255,6 +281,7 @@ class TestDetectEdgeCases:
         # Mock _train_model so StandardScaler doesn't choke on NaN during fitting
         mock_pipeline = MagicMock()
         mock_pipeline.n_samples_seen_ = len(df)
+        mock_pipeline.calibration_ = None   # exercise the per-batch fallback path
         mock_pipeline.decision_function.return_value = np.zeros(len(df) - n_bad)
 
         with patch("ml.anomaly_detector._train_model", return_value=mock_pipeline):
@@ -406,8 +433,8 @@ class TestTrainerMaybeRetrain:
         with patch("ml.trainer.MODEL_STORE_DIR", tmp_model_dir), \
              patch("ml.trainer.RETRAIN_STATE_FILE", tmp_model_dir / "state.json"):
             trainer = AnomalyTrainer()
-            trainer._logs_seen_at_last_retrain = 0
-            result = trainer.maybe_retrain(small_df)
+            trainer._unprocessed_logs_count = 0
+            result = trainer.maybe_retrain(small_df, new_logs_count=len(small_df))
 
         assert result is None, "maybe_retrain should return None below K threshold"
         pkls = list(tmp_model_dir.glob("isolation_forest_v*.pkl"))
@@ -421,8 +448,8 @@ class TestTrainerMaybeRetrain:
         with patch("ml.trainer.MODEL_STORE_DIR", tmp_model_dir), \
              patch("ml.trainer.RETRAIN_STATE_FILE", tmp_model_dir / "state.json"):
             trainer = AnomalyTrainer()
-            trainer._logs_seen_at_last_retrain = 0
-            result = trainer.maybe_retrain(big_df)
+            trainer._unprocessed_logs_count = 0
+            result = trainer.maybe_retrain(big_df, new_logs_count=n)
 
         assert result is not None, "maybe_retrain should return a pipeline at K threshold"
         pkls = list(tmp_model_dir.glob("isolation_forest_v*.pkl"))

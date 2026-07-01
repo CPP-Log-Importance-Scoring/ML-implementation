@@ -22,6 +22,7 @@ Optional flags (edit constants below or pass via environment):
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import sys
@@ -112,6 +113,12 @@ def run() -> None:
     t0 = time.perf_counter()
 
     graph_scores_df = compute_centrality(g, raw_df)
+
+    # Keep g alive: compute_centrality annotated its nodes with centrality_score
+    # in place, and Step 5 exports that live object directly. We deliberately do
+    # NOT round-trip through the pickle — the cache may be owned by another user
+    # (the dashboard runs the pipeline in-container as root), and reloading a
+    # stale pre-centrality pickle is what made every exported node read 0.0.
     logger.info(
         "Centrality computed for %d log rows  centrality_score range=[%.4f, %.4f]  (%.2fs)",
         len(graph_scores_df),
@@ -132,6 +139,10 @@ def run() -> None:
         seq_df = seq_df.copy()
         seq_df["timestamp"] = seq_df["timestamp"].astype("int64") / 1e9
     in_sequence_log_ids = detect_sequences(seq_df, output_path=SEQUENCES_JSON_PATH)
+
+    # Free sequence working data
+    del seq_df, raw_df
+    gc.collect()
 
     with open(SEQUENCES_JSON_PATH, "r") as fh:
         sequences = json.load(fh)
@@ -164,11 +175,17 @@ def run() -> None:
     _section("Step 5/5 — Export graph JSON")
     t0 = time.perf_counter()
 
+    # Export the in-memory graph annotated by compute_centrality (Step 2).
+    # Exporting the live object — rather than reloading the pickle — is what
+    # carries the centrality_score node attribute into the JSON the dashboard
+    # reads. graph_builder remains the only writer of the pickle cache.
     export_graph_json(g, output_path=GRAPH_JSON_PATH)
     logger.info(
         "Graph JSON exported: %d nodes, %d edges  (%.2fs)",
         len(g.nodes), len(g.edges), time.perf_counter() - t0,
     )
+    del g
+    gc.collect()
 
     # ------------------------------------------------------------------
     # Summary

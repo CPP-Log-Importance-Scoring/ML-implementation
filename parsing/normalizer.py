@@ -43,6 +43,7 @@ from typing import Optional
 
 from common.config import SERVICE_ALIAS_MAP
 from common.logger import get_logger
+from dateutil.parser import parse
 
 logger = get_logger(__name__)
 
@@ -68,26 +69,47 @@ _PRI_SEVERITY_MAP = {
 # ---------------------------------------------------------------------------
 
 _TS_PATTERNS = [
-    re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\s+(?P<rest>.+)$"),
-    re.compile(r"^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<rest>.+)$"),
+
+    # RFC3164
+    re.compile(
+        r"^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<rest>.+)$"
+    ),
+
+    # ISO8601
+    re.compile(
+        r"^(?P<ts>\d{4}-\d{2}-\d{2}[T ][^\s]+)\s+(?P<rest>.+)$"
+    ),
+
+    # Structured event logs
+    re.compile(
+        r"^\[(?P<ts>[^\]]+)\]\s+(?P<rest>.+)$"
+    ),
 ]
-
+_KV_EVENT_RE = re.compile(
+    r".*timestamp_ms=(?P<ts>\d{10,13}).*"
+)
 def _parse_timestamp(ts_str: str) -> Optional[datetime]:
-    ts_str = ts_str.strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(ts_str, fmt)
-        except ValueError:
-            pass
-    try:
-        dt = datetime.strptime(ts_str, "%b %d %H:%M:%S")
-        # TODO: year boundary — if parsed month/day is after today, assign previous year.
-        # Affects log files spanning Dec 31 → Jan 1. Deferred — not in scope this week.
-        return dt.replace(year=datetime.now().year)
-    except ValueError:
-        pass
-    return None
 
+    ts_str = ts_str.strip()
+
+    try:
+        dt = parse(ts_str)
+
+        # BSD syslog timestamps don't contain a year
+        if re.match(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}$", ts_str):
+
+            current = datetime.now()
+
+            if (dt.month, dt.day) > (current.month, current.day):
+                dt = dt.replace(year=current.year - 1)
+
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+
+        return dt
+
+    except Exception:
+        return None
 # ---------------------------------------------------------------------------
 # Service extraction
 # ---------------------------------------------------------------------------
@@ -128,6 +150,12 @@ _SEVERITY_TOKEN_MAP = {
 }
 
 _KEYWORD_OVERRIDES: list[tuple[re.Pattern, str]] = [
+    # Resource-exhaustion / kernel events — critical in any OS or network stack,
+    # not specific to this dataset. Placed first so they win over the softer
+    # "memory.*usage → WARN" rule below.
+    (re.compile(r"out of memory|\boom\b|oom[ _-]?kill|oom pressure", re.I), "CRITICAL"),
+    (re.compile(r"\bsigkill\b|killed process|process .*\bkilled\b",  re.I), "CRITICAL"),
+    (re.compile(r"kernel panic|\bpanic\b|watchdog timeout",          re.I), "CRITICAL"),
     (re.compile(r"changed state from \S+ to DOWN",            re.I), "CRITICAL"),
     (re.compile(r"adjacency.*lost|adjacency.*down",           re.I), "CRITICAL"),
     (re.compile(r"port scan detected",                        re.I), "CRITICAL"),
@@ -196,10 +224,43 @@ def normalize_line(line: str) -> Optional[dict]:
             if ts_dt:
                 rest = tm.group("rest").strip()
                 break
+    # --------------------------------------------------
+# Fallback: key=value telemetry events
+# Example:
+# event_id=3001 | port=gigabit_1 | timestamp_ms=1686384930234
+# --------------------------------------------------
 
+    if ts_dt is None:
+        kv_match = _KV_EVENT_RE.match(line_body)
+
+        if kv_match:
+            try:
+                ts_ms = int(kv_match.group("ts"))
+
+                return {
+                    "raw_text": line,
+                    "timestamp": datetime.fromtimestamp(ts_ms / 1000),
+                    "host": "telemetry_event",
+                    "service": "EVENT",
+                    "log_level": _infer_severity(line_body, pri_severity),
+                    "message": line_body,
+                }
+
+            except Exception:
+                pass
     if ts_dt is None:
         logger.warning(f"Unparseable timestamp — skipping line: {line!r}")
         return None
+
+    if rest.startswith("EVENT:"):
+        return {
+            "raw_text": line,
+            "timestamp": ts_dt,
+            "host": "structured_event",
+            "service": "EVENT",
+            "log_level": _infer_severity(rest, pri_severity),
+            "message": rest,
+        }
 
     # First token after timestamp is the hostname
     parts = rest.split(None, 1)
