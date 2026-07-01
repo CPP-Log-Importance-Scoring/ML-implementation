@@ -49,12 +49,14 @@ def format_transition_label(template_id: str) -> str:
 # ── Back button + dropdown header ───────────────────────────────────────────
 # Small top spacer so the Feed button isn't clipped by the toolbar above it.
 st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
-col_back, col_title = st.columns([1.1, 8.9], vertical_alignment="center")
+col_back, col_title = st.columns([1.1, 8.9])
 with col_back:
+    st.markdown("<div style='margin-top:0.4rem;'></div>", unsafe_allow_html=True)
     if st.button("← Feed", key="back_to_feed", use_container_width=True):
         st.switch_page("pages/incident_feed.py")
 with col_title:
-    st.markdown("<h1 style='margin-top:0;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top:0; margin-bottom:0.2rem;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:1.0rem; color:#475569; margin-bottom:0;'>Deep dive into a specific incident to understand what went wrong. View the sequence of events, potential root causes, and an AI-generated summary to help resolve the issue.</p>", unsafe_allow_html=True)
 
 # ── Guard: need a selected incident ─────────────────────────────────────────
 cid = st.session_state.get("selected_incident")

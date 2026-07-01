@@ -49,7 +49,7 @@ with st.sidebar:
         "letter-spacing:0.08em; color:#64748b; padding-bottom:0.4rem;\">Filters</div>",
         unsafe_allow_html=True,
     )
-    start_dt, end_dt = render_time_window("feed")
+    start_dt, end_dt = render_time_window("global")
     st.markdown("---")
     all_hosts = db.get_host_list()
     host_filter       = st.multiselect("Host", options=all_hosts, default=[], placeholder="All hosts", key="feed_host_filter")
@@ -68,6 +68,8 @@ with st.sidebar:
         "severity_filter":   severity_filter,
         "cross_system_only": cross_system_only,
     }
+    from ui import persist_filters
+    persist_filters()
 
 with st.spinner("Loading incidents…"):
     incidents = db.get_incidents(
@@ -82,6 +84,7 @@ with st.spinner("Loading incidents…"):
         incidents = [i for i in incidents if i.get("host") in host_filter]
 
 st.markdown("<h1>Incident Feed</h1>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:#475569; margin-bottom:1.5rem;'>A real-time stream of all detected incidents across your systems. Easily review, filter, and prioritize events that need your attention.</p>", unsafe_allow_html=True)
 
 total          = len(incidents)
 critical_count = sum(1 for i in incidents if (i.get("label") or "").lower() == "critical")
