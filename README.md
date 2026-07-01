@@ -1,10 +1,10 @@
-# Log Importance Scoring & Cross-Signal Correlation
+# HPE CPP3 - Log Importance Scoring & Cross-Signal Correlation
 
 > An unsupervised ML pipeline that turns a high-volume stream of network device
 > syslog into a **short, ranked list of real incidents** — each with a root cause, a
 > causal chain across days, and an on-demand LLM summary.
 
-Built for **Hewlett Packard Enterprise**. The system ingests raw logs, detects
+Built as part of the **HPE CPP3** student program. The system ingests raw logs, detects
 anomalies, groups related lines into **incidents**, ranks them by importance,
 identifies the **root cause**, links incidents across days into **causal chains**,
 and surfaces everything through an analyst-facing Streamlit dashboard.
