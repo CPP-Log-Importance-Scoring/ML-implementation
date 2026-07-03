@@ -96,8 +96,8 @@ with status_col:
 
 st.markdown("<h2 style='margin-bottom: 0.8rem;'>Quick access</h2>", unsafe_allow_html=True)
 
-# ── 5-column layout: existing 4 cards + new Upload & Analyze card ─────────
-col1, col2, col3, col4, col5 = st.columns(5, gap="medium")
+# ── 4-column quick-access layout ────────────────────────────────────────────
+col1, col2, col3, col4 = st.columns(4, gap="medium")
 
 with col1:
     st.markdown(
@@ -121,23 +121,6 @@ with col2:
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
           <div>
-            <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Incident Detail</div>
-            <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
-              Force-directed correlation graphs, interactive timelines, and cached AI summaries.
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    if st.button("Open Details →", key="nav_detail", use_container_width=True, type="primary"):
-        st.switch_page("pages/incident_detail.py")
-
-with col3:
-    st.markdown(
-        """
-        <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
-          <div>
             <div style="font-weight: 700; color: #0f172a; font-size: 0.95rem;">Host Health</div>
             <div style="color: #64748b; font-size: 0.78rem; margin-top: 4px; line-height: 1.45;">
               Per-host statistics, incident counts, anomaly rate visualizations, and trend graphs.
@@ -150,7 +133,7 @@ with col3:
     if st.button("Open Health →", key="nav_health", use_container_width=True, type="primary"):
         st.switch_page("pages/host_health.py")
 
-with col4:
+with col3:
     st.markdown(
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;">
@@ -167,7 +150,7 @@ with col4:
     if st.button("Open Search →", key="nav_search", use_container_width=True, type="primary"):
         st.switch_page("pages/log_search.py")
 
-with col5:
+with col4:
     st.markdown(
         """
         <div class="kpi-card" style="min-height: 170px; display: flex; flex-direction: column; justify-content: space-between; margin-bottom: 10px;
