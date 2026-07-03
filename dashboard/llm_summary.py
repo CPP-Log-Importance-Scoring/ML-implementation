@@ -198,12 +198,27 @@ def _build_context(cid: str, scored_df: pd.DataFrame, root_causes_df: pd.DataFra
     if rc_col:
         rc = root_causes_df[root_causes_df[rc_col] == cid]
 
+    # Describe root causes by their log text where available, not their
+    # log_<n> id — the prompt rules forbid the model from inventing anything,
+    # so bare ids get echoed verbatim into the summary.
     rc_str = "none identified"
     if not rc.empty and "root_cause_log_id" in rc.columns:
-        rc_str = ", ".join(
-            f"{r['root_cause_log_id']} (conf: {r.get('confidence_score', 0):.2f})"
-            for _, r in rc.iterrows()
-        )
+        rc_texts: dict[str, str] = {}
+        text_col = next((c for c in ("message", "template_id") if c in cluster.columns), None)
+        if text_col and {"is_root_cause", "sequence_number"} <= set(cluster.columns):
+            rc_rows = cluster[cluster["is_root_cause"].fillna(False).astype(bool)]
+            rc_texts = {
+                f"log_{int(r['sequence_number']):06d}": str(r[text_col]).strip()[:100]
+                for _, r in rc_rows.iterrows()
+                if pd.notna(r["sequence_number"])
+            }
+
+        def _describe(r) -> str:
+            base = f"(conf: {r.get('confidence_score', 0):.2f})"
+            text = rc_texts.get(str(r["root_cause_log_id"]))
+            return f'"{text}" {base}' if text else f"{r['root_cause_log_id']} {base}"
+
+        rc_str = ", ".join(_describe(r) for _, r in rc.iterrows())
 
     hosts = (
         ", ".join(cluster["host"].dropna().unique())

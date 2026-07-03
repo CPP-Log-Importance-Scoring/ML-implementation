@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -39,14 +40,32 @@ _COLOUR = {
 _MAX_LABEL_LEN = 18  # characters before truncation with "…"
 
 
-def _short_label(template_id: str) -> str:
+# Opaque drain3 hash ids (e.g. TMPL_5AC1A945) carry no meaning on the canvas;
+# for those the node label is derived from a representative log message instead.
+_HASH_ID_RE = re.compile(r"^TMPL_[0-9A-Fa-f]{6,}$")
+
+
+def _dedup_tokens(text: str) -> str:
+    """Collapse immediately repeated tokens ("OSPF_RECONVERGENCE OSPF_RECONVERGENCE")."""
+    out: list[str] = []
+    for tok in text.split():
+        if not out or out[-1] != tok:
+            out.append(tok)
+    return " ".join(out)
+
+
+def _short_label(template_id: str, template_text: dict[str, str] | None = None) -> str:
     """
     Return a display-friendly label for a template_id node.
 
     OSPF_ADJACENCY_ON_CHANGED_STATE  →  "Ospf Adjacency On…"
     CPU_UTILIZATION_EXCEEDED         →  "Cpu Utilization E…"
+    TMPL_5AC1A945 (hash id)          →  label from its representative message
     """
-    readable = template_id.replace("_", " ").title()
+    source = template_id
+    if template_text and _HASH_ID_RE.match(template_id):
+        source = template_text.get(template_id, template_id)
+    readable = _dedup_tokens(source.replace("_", " ")).title()
     if len(readable) > _MAX_LABEL_LEN:
         return readable[: _MAX_LABEL_LEN - 1] + "…"
     return readable
@@ -95,6 +114,17 @@ def render_graph(
         return
 
     incident_templates: set[str] = set(incident_logs["template_id"].dropna().unique())
+
+    # Representative message per template, so hash-id nodes can show content.
+    template_text: dict[str, str] = {}
+    if "message" in incident_logs.columns:
+        template_text = (
+            incident_logs.dropna(subset=["template_id", "message"])
+            .astype({"message": str})
+            .groupby("template_id")["message"]
+            .first()
+            .to_dict()
+        )
 
     # Determine anomalous templates from labels
     anomalous_templates: set[str] = set()
@@ -202,12 +232,14 @@ def render_graph(
         # and rely on vis.js's own tooltip container for styling, OR — simplest
         # and most reliable — use plain text only (no HTML tags at all).
         # Plain text is always safe; vis.js wraps it in a <div> automatically.
-        short  = _short_label(nid)
+        short  = _short_label(nid, template_text)
         status_parts = []
         if is_rc:   status_parts.append("ROOT CAUSE")
         if is_anom: status_parts.append("Anomalous")
         status_str = "  |  " + "  |  ".join(status_parts) if status_parts else ""
-        tooltip = f"{nid}\nCentrality: {centrality:.3f}{status_str}"
+        msg = _dedup_tokens(str(template_text.get(nid, "")))[:90]
+        msg_line = f"\n{msg}" if msg else ""
+        tooltip = f"{nid}{msg_line}\nCentrality: {centrality:.3f}{status_str}"
 
         net.add_node(
             nid,
