@@ -31,7 +31,3 @@ ml/model_store/
 
 .claude
 docs/
-
-# Local dashboard UI state — rewritten (key order only) on every dashboard
-# session by dashboard/ui.py:persist_filters(), not meaningful source content.
-storage/filters.json
