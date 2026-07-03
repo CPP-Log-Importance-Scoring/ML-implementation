@@ -209,25 +209,38 @@ with col_graph:
         best_rc = root_causes.iloc[0]
         rc_conf = float(best_rc.get("confidence_score", 0))
         rc_ts   = pd.to_datetime(best_rc.get("timestamp")).strftime("%d %b, %H:%M:%S")
+        # Sanitize: log parsers sometimes echo the template ID as the message,
+        # resulting in text like "PROCESS_KILLED PROCESS_KILLED". Deduplicate
+        # repeated tokens and fall back to the formatted template label when
+        # the message adds no real information beyond the template ID.
+        raw_msg    = str(best_rc.get("message") or "").strip()
+        tpl_id     = str(best_rc.get("template_id") or "").strip()
+        tpl_label  = format_transition_label(tpl_id)
+
+        # Deduplicate consecutive repeated words  (e.g. "FOO FOO" → "FOO")
+        tokens = raw_msg.split()
+        deduped = [tokens[0]] + [t for i, t in enumerate(tokens[1:], 1) if t != tokens[i - 1]] if tokens else []
+        clean_msg = " ".join(deduped)
+
+        # If the cleaned message is empty or is just the template ID, use the label
+        if not clean_msg or clean_msg.upper().replace(" ", "_") == tpl_id.upper():
+            display_msg = tpl_label
+        else:
+            display_msg = clean_msg
+
         st.markdown(
             f"""
             <div style='background:#fff5f5; border:1px solid #fee2e2; border-radius:10px; padding:0.85rem; margin-top:0.5rem;'>
+              <div style='background:#ffffff; border:1px solid #f3f4f6; border-radius:6px; padding:6px; font-size:0.78rem; color:#4b5563; font-family:"IBM Plex Mono",monospace; margin-bottom:8px;'>
+                {display_msg}
+              </div>
               <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span style='font-family:"IBM Plex Mono",monospace; font-size:0.8rem; font-weight:700; color:#b91c1c;'>
-                  {best_rc.get("root_cause_log_id")}
+                <span style='font-size:0.75rem; color:#6b7280;'>
+                  Host: <b>{best_rc.get("host")}</b> · {rc_ts}
                 </span>
                 <span style='background:#fecaca; color:#991b1b; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;'>
                   CONFIDENCE: {rc_conf:.0%}
                 </span>
-              </div>
-              <div style='font-size:0.8rem; font-weight:600; color:#374151; margin-top:6px;'>
-                Template: <code style='color:#b91c1c;'>{best_rc.get("template_id")}</code>
-              </div>
-              <div style='font-size:0.75rem; color:#6b7280; margin-top:2px;'>
-                Host: <b>{best_rc.get("host")}</b> · Time: {rc_ts}
-              </div>
-              <div style='background:#ffffff; border:1px solid #f3f4f6; border-radius:6px; padding:6px; font-size:0.78rem; color:#4b5563; font-family:"IBM Plex Mono",monospace; margin-top:8px;'>
-                {best_rc.get("message")}
               </div>
             </div>
             """,
