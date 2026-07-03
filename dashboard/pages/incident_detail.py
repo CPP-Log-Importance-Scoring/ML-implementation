@@ -49,14 +49,13 @@ def format_transition_label(template_id: str) -> str:
 # ── Back button + dropdown header ───────────────────────────────────────────
 # Small top spacer so the Feed button isn't clipped by the toolbar above it.
 st.markdown("<div style='height:0.75rem;'></div>", unsafe_allow_html=True)
-col_back, col_title = st.columns([1.1, 8.9])
+col_back, col_title = st.columns([1.1, 8.9], vertical_alignment="center")
 with col_back:
-    st.markdown("<div style='margin-top:0.4rem;'></div>", unsafe_allow_html=True)
     if st.button("← Feed", key="back_to_feed", use_container_width=True):
         st.switch_page("pages/incident_feed.py")
 with col_title:
-    st.markdown("<h1 style='margin-top:0; margin-bottom:0.2rem;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='font-size:1.0rem; color:#475569; margin-bottom:0;'>Deep dive into a specific incident to understand what went wrong. View the sequence of events, potential root causes, and an AI-generated summary to help resolve the issue.</p>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin-top:0; margin-bottom:0.3rem;'>Incident Detail & Diagnostics</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:1.0rem; color:#475569; margin-bottom:1.1rem;'>Deep dive into a specific incident to understand what went wrong. View the sequence of events, potential root causes, and an AI-generated summary to help resolve the issue.</p>", unsafe_allow_html=True)
 
 # ── Guard: need a selected incident ─────────────────────────────────────────
 cid = st.session_state.get("selected_incident")
@@ -129,21 +128,27 @@ if "timestamp" in incident_logs.columns:
         start_val = ts.min().strftime("%d %b %Y %H:%M:%S")
         end_val   = ts.max().strftime("%H:%M:%S")
 
-cross_tag = " &nbsp;<span class='cross-system-badge'>⚠ CROSS-SYS</span>" if is_cross else ""
+cross_tag = (
+    "<span style='background:#fef9c3; color:#92400e; font-size:0.72rem; font-weight:700; "
+    "padding:2px 8px; border-radius:4px; border:1px solid #fde68a;'>⚠ CROSS-SYS</span>"
+    if is_cross else ""
+)
 
 st.markdown(
-    f"<div style='display:flex; align-items:center; gap:12px; flex-wrap:wrap; "
-    f"margin:-8px 0 1rem 0; padding: 0.5rem 0.8rem; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0;'>"
-    f"{severity_badge(worst_label, size='md')}"
-    f"<span style='font-family:\"IBM Plex Mono\",monospace; font-weight:700; font-size:1.05rem; color:#0f172a;'>{cid}</span>"
-    f"<span style='color:#cbd5e1;'>|</span>"
-    f"<span style='font-size:0.85rem; color:#475569;'><b>Hosts:</b> {host_val}</span>"
-    f"<span style='color:#cbd5e1;'>|</span>"
-    f"<span style='font-size:0.8rem; color:#64748b; font-family:\"IBM Plex Mono\",monospace;'>"
-    f"{start_val} → {end_val}</span>"
-    f"<span style='color:#cbd5e1;'>|</span>"
-    f"<span style='font-size:0.8rem; color:#64748b;'><b>Volume:</b> {log_count:,} logs</span>"
-    f"{cross_tag}"
+    f"<div style='margin:0 0 1rem 0; padding:0.75rem 1rem; background:#f8fafc; "
+    f"border-radius:8px; border:1px solid #e2e8f0;'>"
+    f"<div style='display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:0.4rem;'>"
+    f"  {severity_badge(worst_label, size='md')}"
+    f"  <span style='font-family:\"IBM Plex Mono\",monospace; font-weight:700; font-size:1.05rem; color:#0f172a;'>{cid}</span>"
+    f"  {cross_tag}"
+    f"</div>"
+    f"<div style='display:flex; align-items:center; gap:16px; flex-wrap:wrap; font-size:0.82rem; color:#475569;'>"
+    f"  <span><b>Hosts:</b> {host_val}</span>"
+    f"  <span style='color:#cbd5e1;'>|</span>"
+    f"  <span style='font-family:\"IBM Plex Mono\",monospace; color:#64748b;'>{start_val} → {end_val}</span>"
+    f"  <span style='color:#cbd5e1;'>|</span>"
+    f"  <span><b>Volume:</b> {log_count:,} logs</span>"
+    f"</div>"
     f"</div>",
     unsafe_allow_html=True,
 )
@@ -151,9 +156,9 @@ st.markdown(
 # ── Incident Switcher bar ───────────────────────────────────────────────────
 if recent_incidents:
     switcher_options = {i["correlation_id"]: f"{i['correlation_id']} ({i['label'].upper()} · {i['host']})" for i in recent_incidents}
-    col_label, col_select = st.columns([2, 8])
+    col_label, col_select = st.columns([1.4, 8.6], vertical_alignment="center")
     with col_label:
-        st.write("<div style='padding-top:6px; font-size:0.82rem; font-weight:600; color:#64748b;'>SWITCH INCIDENT:</div>", unsafe_allow_html=True)
+        st.write("<div style='font-size:0.82rem; font-weight:600; color:#64748b; white-space:nowrap;'>SWITCH INCIDENT:</div>", unsafe_allow_html=True)
     with col_select:
         switched = st.selectbox(
             "Switch Incident",
@@ -260,7 +265,7 @@ with col_timeline:
                 last_tpl = tpl
 
         steps_html = ""
-        for tpl, lbl, is_rc in flow_steps[:8]:
+        for tpl, lbl, is_rc in flow_steps:
             display_name = format_transition_label(tpl)
 
             if is_rc:
@@ -286,21 +291,17 @@ with col_timeline:
                 "</div>"
             )
 
-        if len(flow_steps) > 8:
-            steps_html += (
-                "<div style='position:relative; margin-bottom:12px;'>"
-                "  <span style='font-size:0.78rem; color:#64748b; font-style:italic;'>"
-                "    ... (+" + str(len(flow_steps) - 8) + " more transitions)"
-                "  </span>"
-                "</div>"
-            )
-
         # Vertical guide line rendered as a real <div>, not a CSS ::before
         # pseudo-element (Streamlit's sanitizer strips pseudo-elements).
+        # The outer div is a fixed-height scroll viewport so long incidents
+        # show every transition; the line lives in the inner div so it spans
+        # the full scrollable content, not just the visible window.
         flow_html = (
-            "<div style='position:relative; padding-left:20px; margin-top:10px; margin-bottom:15px;'>"
-            "  <div style='position:absolute; left:4px; top:8px; bottom:8px; width:2px; background:#cbd5e1;'></div>"
+            "<div style='max-height:420px; overflow-y:auto; margin-top:10px; margin-bottom:15px;'>"
+            "  <div style='position:relative; padding-left:20px;'>"
+            "    <div style='position:absolute; left:4px; top:8px; bottom:8px; width:2px; background:#cbd5e1;'></div>"
             + steps_html
+            + "  </div>"
             + "</div>"
         )
         st.markdown(flow_html, unsafe_allow_html=True)
@@ -384,9 +385,21 @@ with col_summary:
                 if len(templates) > 10:
                     template_seq += f" (+{len(templates) - 10} more)"
 
+            # Describe root causes by their log text, not their log_<n> id —
+            # the LLM is instructed to use only what it is given, so bare ids
+            # end up echoed verbatim in the summary.
             rc_str = "none"
-            if not root_causes.empty and "root_cause_log_id" in root_causes.columns:
-                rc_str = ", ".join(root_causes["root_cause_log_id"].dropna().astype(str).tolist())
+            if not root_causes.empty:
+                rc_parts = []
+                for _, r in root_causes.head(5).iterrows():
+                    desc = r.get("message") or r.get("template_id") or r.get("root_cause_log_id")
+                    conf = r.get("confidence_score")
+                    desc = str(desc).strip()[:100]
+                    if pd.notna(conf):
+                        rc_parts.append(f'"{desc}" (confidence {float(conf):.2f})')
+                    else:
+                        rc_parts.append(f'"{desc}"')
+                rc_str = "; ".join(rc_parts)
 
             # Duration from the (sorted) log timestamps.
             duration_s = 0
