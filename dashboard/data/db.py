@@ -196,8 +196,7 @@ def get_incidents(
 def get_incident_logs(correlation_id: str) -> pd.DataFrame:
     """All logs in a given incident with scores + feature columns."""
     query = """
-        SELECT
-            l.sequence_number AS log_id,
+        SELECT DISTINCT ON (l.sequence_number)
             l.sequence_number,
             l.timestamp,
             l.host,
@@ -222,7 +221,7 @@ def get_incident_logs(correlation_id: str) -> pd.DataFrame:
         JOIN scores s ON s.sequence_number = l.sequence_number AND s.run_id = l.run_id
         LEFT JOIN features f ON f.sequence_number = l.sequence_number AND f.run_id = l.run_id
         WHERE s.correlation_id = %s
-        ORDER BY l.timestamp ASC
+        ORDER BY l.sequence_number, s.final_score DESC, l.timestamp ASC
     """
     return _query_dataframe(query, (correlation_id,))
 

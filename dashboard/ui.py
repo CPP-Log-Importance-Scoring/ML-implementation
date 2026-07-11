@@ -400,7 +400,6 @@ def apply_theme() -> None:
 _NAV_LINKS = [
     ("app.py",                   "Home"),
     ("pages/incident_feed.py",   "Incident Feed"),
-    ("pages/incident_detail.py", "Incident Detail"),
     ("pages/host_health.py",     "Host Health"),
     ("pages/log_search.py",      "Log Search"),
     ("pages/upload_logs.py",     "Upload & Analyze"),

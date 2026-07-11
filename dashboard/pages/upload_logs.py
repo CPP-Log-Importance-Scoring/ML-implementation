@@ -495,10 +495,20 @@ if st.session_state.job_status in ("success", "failed"):
                 _surfaced_mask = None
                 n_critical = n_inc_medium = 0
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total rows processed", f"{total_rows:,}")
-            m2.metric("Anomalies detected",   total_anomalies if isinstance(total_anomalies, str) else f"{total_anomalies:,}")
-            m3.metric("Critical Logs", f"{n_critical:,}" if label_col_exists else "N/A")
+            # Critical count is shown in the Surfaced Severity section below, so it
+            # is not repeated here as a top tile (avoids the duplicate 6 == 6).
+            m1, m2 = st.columns(2)
+            m1.metric(
+                "Total rows processed", f"{total_rows:,}",
+                help="Total number of log lines read from the uploaded file(s) in this batch.",
+            )
+            m2.metric(
+                "Anomalies detected",
+                total_anomalies if isinstance(total_anomalies, str) else f"{total_anomalies:,}",
+                help="Log lines the ML model flagged as behaviourally unusual (is_anomaly). "
+                     "This is a high-recall first pass — later stages (scoring, clustering, "
+                     "escalation) narrow these down to the incidents that actually matter.",
+            )
 
             # ── Volume stats ─────────────────────────────────────────────
             _surfaced    = total_anomalies if isinstance(total_anomalies, int) else 0
@@ -506,21 +516,59 @@ if st.session_state.job_status in ("success", "failed"):
             _signal_rate = (_surfaced / total_rows) * 100 if total_rows > 0 else 0.0
             _reduction_color = "#15803d" if _reduction >= 80 else ("#b45309" if _reduction >= 50 else "#dc2626")
 
+            # Custom hover tooltip that mimics Streamlit's native st.metric help
+            # popover (white rounded box, dark text) so the custom HTML tiles match
+            # the top row exactly instead of the plain OS `title` tooltip.
+            # NOTE: inject the <style> as its OWN st.markdown call (global CSS).
+            # Prepending it to the indented tile HTML makes Markdown treat the
+            # following indented <div> lines as a CODE BLOCK — which renders the
+            # raw HTML as visible text.
+            _TT_CSS = (
+                "<style>"
+                ".uq-tt{position:relative;display:inline-flex;align-items:center;}"
+                ".uq-tt .uq-q{display:inline-flex;align-items:center;justify-content:center;"
+                "width:15px;height:15px;border-radius:50%;border:1px solid #94a3b8;color:#94a3b8;"
+                "font-size:10px;font-weight:700;line-height:1;margin-left:5px;cursor:help;}"
+                ".uq-tt .uq-box{visibility:hidden;opacity:0;position:absolute;bottom:135%;left:50%;"
+                "transform:translateX(-50%);width:240px;background:#ffffff;color:#31333f;"
+                "border:1px solid #e2e8f0;border-radius:8px;padding:8px 12px;font-size:0.76rem;"
+                "font-weight:400;line-height:1.45;text-align:left;text-transform:none;"
+                "letter-spacing:normal;box-shadow:0 4px 14px rgba(15,23,42,0.16);z-index:1000;"
+                "transition:opacity .12s ease;pointer-events:none;}"
+                ".uq-tt:hover .uq-box{visibility:visible;opacity:1;}"
+                "</style>"
+            )
+
+            def _help(desc: str) -> str:
+                return (
+                    "<span class='uq-tt'><span class='uq-q'>?</span>"
+                    f"<span class='uq-box'>{desc}</span></span>"
+                )
+
+            _nr_desc = ("Share of the stream NOT flagged as anomalous — the routine volume "
+                        "the ML suppressed so an operator does not have to read it. "
+                        "Equals 100% minus the Signal Rate.")
+            _sr_desc = ("Share of the stream flagged as anomalous by the ML model. The flip "
+                        "side of Noise Reduction — the two always add up to 100%.")
+
+            # Inject tooltip CSS once (global to the app), not prepended to tile HTML.
+            st.markdown(_TT_CSS, unsafe_allow_html=True)
+
             st.markdown(
                 f"""
                 <div style='display:flex; gap:1rem; margin-top:1rem; flex-wrap:wrap;'>
                   <div style='flex:1; min-width:160px; background:#f8fafc; border:1px solid #e2e8f0;
-                              border-radius:10px; padding:0.85rem 1rem;'>
+                              border-radius:10px; padding:0.85rem 1rem; overflow:visible;'>
                     <div style='font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em;
-                                color:#64748b; font-weight:600;'>Noise Reduction</div>
+                                color:#64748b; font-weight:600;'>Noise Reduction{_help(_nr_desc)}</div>
                     <div style='font-size:1.45rem; font-weight:800; color:{_reduction_color};
                                 font-family:"IBM Plex Mono",monospace; margin-top:2px;'>{_reduction:.1f}%</div>
                     <div style='font-size:0.75rem; color:#94a3b8; margin-top:2px;'>of volume suppressed by ML</div>
                   </div>
                   <div style='flex:1; min-width:160px; background:#f8fafc; border:1px solid #e2e8f0;
-                              border-radius:10px; padding:0.85rem 1rem;'>
+                              border-radius:10px; padding:0.85rem 1rem; overflow:visible;'>
                     <div style='font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em;
-                                color:#64748b; font-weight:600;'>Signal Rate</div>
+                                color:#64748b; font-weight:600;'>Signal Rate{_help(_sr_desc)}</div>
                     <div style='font-size:1.45rem; font-weight:800; color:#7c3aed;
                                 font-family:"IBM Plex Mono",monospace; margin-top:2px;'>{_signal_rate:.1f}%</div>
                     <div style='font-size:0.75rem; color:#94a3b8; margin-top:2px;'>of stream flagged as anomalous</div>
@@ -535,19 +583,24 @@ if st.session_state.job_status in ("success", "failed"):
                 st.markdown("#### Surfaced Severity")
                 _suppressed = total_rows - int(_surfaced_mask.sum())
                 _tiles = [
-                    ("critical",    n_critical,   "critical"),
-                    ("in-incident", n_inc_medium, "medium"),
+                    ("critical",    n_critical,   "critical",
+                     "Lines labelled 'critical' after final scoring. These are surfaced on "
+                     "their own, whether or not they were grouped into an incident."),
+                    ("in-incident", n_inc_medium, "medium",
+                     "'medium' lines that were grouped into a formed incident (they share a "
+                     "correlation_id). A lone medium line is treated as noise and hidden; a "
+                     "cluster of them close together in time is surfaced as a real signal."),
                 ]
                 sev_cols = st.columns(len(_tiles))
-                for col, (caption, count, ckey) in zip(sev_cols, _tiles):
+                for col, (caption, count, ckey, desc) in zip(sev_cols, _tiles):
                     color = LABEL_COLORS.get(ckey, "#64748b")
                     col.markdown(
                         f"""
                         <div style='background:{color}18; border:1px solid {color}44;
-                                    border-radius:10px; padding:0.7rem 1rem; text-align:center;'>
+                                    border-radius:10px; padding:0.7rem 1rem; text-align:center; overflow:visible;'>
                           <div style='font-size:1.6rem; font-weight:800; color:{color};'>{count:,}</div>
                           <div style='font-size:0.78rem; color:#475569; text-transform:uppercase;
-                                      letter-spacing:0.12em; margin-top:2px;'>{caption}</div>
+                                      letter-spacing:0.12em; margin-top:2px;'>{caption}{_help(desc)}</div>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -598,6 +651,17 @@ if st.session_state.job_status in ("success", "failed"):
                     st.caption(
                         f"Showing all {len(flagged):,} flagged log line(s). "
                         "Use Incident Feed / Log Search for full triage."
+                    )
+
+                    # Export the surfaced critical/in-incident rows to CSV, matching
+                    # the download affordance on the Incident Detail page.
+                    _batch_slug = str(st.session_state.get("job_batch_id") or "batch").replace("/", "_")
+                    st.download_button(
+                        "Export Critical Logs to CSV",
+                        data=table_df.to_csv(index=False),
+                        file_name=f"critical_logs_{_batch_slug}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
                     )
 
                     # Detailed drill-down for the top critical lines

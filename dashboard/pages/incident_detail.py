@@ -209,25 +209,38 @@ with col_graph:
         best_rc = root_causes.iloc[0]
         rc_conf = float(best_rc.get("confidence_score", 0))
         rc_ts   = pd.to_datetime(best_rc.get("timestamp")).strftime("%d %b, %H:%M:%S")
+        # Sanitize: log parsers sometimes echo the template ID as the message,
+        # resulting in text like "PROCESS_KILLED PROCESS_KILLED". Deduplicate
+        # repeated tokens and fall back to the formatted template label when
+        # the message adds no real information beyond the template ID.
+        raw_msg    = str(best_rc.get("message") or "").strip()
+        tpl_id     = str(best_rc.get("template_id") or "").strip()
+        tpl_label  = format_transition_label(tpl_id)
+
+        # Deduplicate consecutive repeated words  (e.g. "FOO FOO" → "FOO")
+        tokens = raw_msg.split()
+        deduped = [tokens[0]] + [t for i, t in enumerate(tokens[1:], 1) if t != tokens[i - 1]] if tokens else []
+        clean_msg = " ".join(deduped)
+
+        # If the cleaned message is empty or is just the template ID, use the label
+        if not clean_msg or clean_msg.upper().replace(" ", "_") == tpl_id.upper():
+            display_msg = tpl_label
+        else:
+            display_msg = clean_msg
+
         st.markdown(
             f"""
             <div style='background:#fff5f5; border:1px solid #fee2e2; border-radius:10px; padding:0.85rem; margin-top:0.5rem;'>
+              <div style='background:#ffffff; border:1px solid #f3f4f6; border-radius:6px; padding:6px; font-size:0.78rem; color:#4b5563; font-family:"IBM Plex Mono",monospace; margin-bottom:8px;'>
+                {display_msg}
+              </div>
               <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span style='font-family:"IBM Plex Mono",monospace; font-size:0.8rem; font-weight:700; color:#b91c1c;'>
-                  {best_rc.get("root_cause_log_id")}
+                <span style='font-size:0.75rem; color:#6b7280;'>
+                  Host: <b>{best_rc.get("host")}</b> · {rc_ts}
                 </span>
                 <span style='background:#fecaca; color:#991b1b; font-size:10px; font-weight:700; padding:2px 6px; border-radius:4px;'>
                   CONFIDENCE: {rc_conf:.0%}
                 </span>
-              </div>
-              <div style='font-size:0.8rem; font-weight:600; color:#374151; margin-top:6px;'>
-                Template: <code style='color:#b91c1c;'>{best_rc.get("template_id")}</code>
-              </div>
-              <div style='font-size:0.75rem; color:#6b7280; margin-top:2px;'>
-                Host: <b>{best_rc.get("host")}</b> · Time: {rc_ts}
-              </div>
-              <div style='background:#ffffff; border:1px solid #f3f4f6; border-radius:6px; padding:6px; font-size:0.78rem; color:#4b5563; font-family:"IBM Plex Mono",monospace; margin-top:8px;'>
-                {best_rc.get("message")}
               </div>
             </div>
             """,
@@ -502,73 +515,3 @@ with col_summary:
         + "</div>"
     )
     st.markdown(diag_html, unsafe_allow_html=True)
-
-    # Classification Rationale
-    st.markdown("<h4>Classification Rationale</h4>", unsafe_allow_html=True)
-    reasons = []
-    if max_sev  >= 0.7: reasons.append("<li>High severity template match (CRITICAL / ERROR log level detected).</li>")
-    if max_prox >= 0.5: reasons.append("<li>Direct statistical proximity to interface drop/packet drop templates.</li>")
-    if max_freq >= 3.0: reasons.append("<li>Burst frequency anomaly: anomalous volume burst on templates.</li>")
-    if is_cross:        reasons.append("<li>Cross-system propagation: incident affects multiple network switches.</li>")
-    if not reasons:     reasons.append("<li>Standard low-level statistical warning or routing change sequence.</li>")
-
-    st.markdown(
-        "<div style='background:#fffbeb; border:1px solid #fef3c7; border-radius:8px; padding:0.6rem 0.8rem; font-size:0.78rem; color:#92400e;'>"
-        "  <ul style='margin:0; padding-left:1.1rem; line-height:1.4;'>"
-        + "".join(reasons)
-        + "  </ul>"
-          "</div>",
-        unsafe_allow_html=True,
-    )
-
-    st.divider()
-
-    # Root cause candidates list
-    st.markdown("<h3>Root Cause Candidates</h3>", unsafe_allow_html=True)
-    if root_causes.empty:
-        st.caption("No root cause candidates identified.")
-    else:
-        for _, rc in root_causes.iterrows():
-            rc_id       = str(rc.get("root_cause_log_id", "—"))
-            conf        = float(rc.get("confidence_score", 0))
-            in_g        = bool(rc.get("in_graph", False))
-            rc_host     = str(rc.get("host", ""))
-            rc_template = str(rc.get("template_id", ""))
-
-            graph_badge = (
-                "<span style='background:#dcfce7; color:#15803d; font-size:9px; "
-                "padding:2px 5px; border-radius:4px; font-weight:700; "
-                "font-family:\"IBM Plex Mono\",monospace;'>IN-GRAPH</span>"
-                if in_g else
-                "<span style='background:#f1f5f9; color:#64748b; font-size:9px; "
-                "padding:2px 5px; border-radius:4px; font-weight:700; "
-                "font-family:\"IBM Plex Mono\",monospace;'>OUT-OF-GRAPH</span>"
-            )
-
-            bar_color = "#DC2626" if conf >= 0.8 else ("#F59E0B" if conf >= 0.5 else "#22C55E")
-            conf_pct  = "{:.0%}".format(conf)
-            bar_width = "{:.0f}%".format(conf * 100)
-
-            st.markdown(
-                "<div style='background:#ffffff; border:1px solid #e2e8f0; border-radius:8px;"
-                "            padding:0.6rem 0.8rem; margin-bottom:0.4rem;'>"
-                "  <div style='display:flex; justify-content:space-between; align-items:center;'>"
-                "    <span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.75rem;"
-                "                 font-weight:700; color:#0f172a;'>" + rc_id + "</span>"
-                "    " + graph_badge +
-                "  </div>"
-                "  <div style='font-size:0.72rem; color:#64748b; margin-top:2px;'>"
-                + rc_template + " · <b>" + rc_host + "</b>"
-                + "  </div>"
-                  "  <div style='margin-top:6px;'>"
-                  "    <div style='display:flex; justify-content:space-between; margin-bottom:2px;'>"
-                  "      <span style='font-size:0.68rem; color:#94a3b8; font-weight:600; text-transform:uppercase;'>Confidence</span>"
-                  "      <span style='font-family:\"IBM Plex Mono\",monospace; font-size:0.72rem; font-weight:700; color:" + bar_color + ";'>" + conf_pct + "</span>"
-                  "    </div>"
-                  "    <div style='background:#e2e8f0; border-radius:2px; height:3px;'>"
-                  "      <div style='background:" + bar_color + "; width:" + bar_width + "; height:3px; border-radius:2px;'></div>"
-                  "    </div>"
-                  "  </div>"
-                  "</div>",
-                unsafe_allow_html=True,
-            )
