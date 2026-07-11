@@ -497,7 +497,7 @@ Change the host port in `docker-compose.yml` (e.g. `"5433:5432"`) or set
 ### "No saved model found in model_store" on first run
 **This is expected, not an error.** No trained model ships with the repo. The pipeline
 cold-starts and trains one automatically — see
-[7e. What about the trained model?](#7e-what-about-the-trained-model-first-run-behaviour).
+[7c. Why train on a clean baseline first?](#7c-why-train-on-a-clean-baseline-first).
 
 ### Want a completely fresh ML model
 Delete the saved models and the rolling training store, then re-run:
